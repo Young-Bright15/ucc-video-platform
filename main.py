@@ -35,6 +35,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Initialize password hashing context globally
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 # JWT Security Configuration
 SECRET_KEY = os.getenv("SECRET_KEY", "your_super_secret_key_here")
 ALGORITHM = "HS256"
@@ -108,9 +111,8 @@ def setup_initial_admin(data: schemas.UserCreate, db: Session = Depends(get_db))
             status_code=400, 
             detail="Password is required."
         )
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
     hashed_password = pwd_context.hash(password_to_hash)
-    
+
     # 3. Create the initial admin user model instance
     initial_admin = models.User(
         Username=getattr(data, "Username", None) or getattr(data, "username", None),
@@ -158,24 +160,50 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.post("/register", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
-def register_student(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    existing = db.query(models.User).filter(
-        or_(models.User.Username == user.Username, models.User.Email == user.Email)
-    ).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Username or email already registered.")
+@app.post("/register")
+def register_student(data: schemas.UserCreate, db: Session = Depends(get_db)):
+    # 1. Extract and validate the incoming password
+    password_to_hash = getattr(data, "password", None) or getattr(data, "Password", None)
+    if not password_to_hash:
+        raise HTTPException(
+            status_code=400, 
+            detail="Password is required."
+        )
     
+    # 2. Hash the password securely using pwd_context
+    hashed_password = pwd_context.hash(password_to_hash)
+    
+    # 3. Check if username or email already exists
+    username_val = getattr(data, "Username", None) or getattr(data, "username", None)
+    email_val = getattr(data, "Email", None) or getattr(data, "email", None)
+    
+    existing_user = db.query(models.User).filter(
+        (models.User.Username == username_val) | (models.User.Email == email_val)
+    ).first()
+    
+    if existing_user:
+        raise HTTPException(
+            status_code=400, 
+            detail="Username or Email already registered."
+        )
+
+    # 4. Create the new user instance (RoleID = 2 for regular student/user)
     new_user = models.User(
-        Username=user.Username,
-        Email=user.Email,
-        PasswordHash=get_password_hash(user.Password),
-        RoleID=4  # Default Student Role
+        Username=username_val,
+        Email=email_val,
+        PasswordHash=hashed_password,
+        RoleID=getattr(data, "RoleID", 2)  
     )
+    
+    # 5. Save to database
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    return new_user
+    
+    return {
+        "message": "Student registered successfully!", 
+        "username": new_user.Username
+    }
 
 @app.post("/admin/create-user", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
 def admin_create_user(user: schemas.UserCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
