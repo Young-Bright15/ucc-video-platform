@@ -2,6 +2,11 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
 
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
 # --- User Schemas ---
 class UserCreate(BaseModel):
     Username: str
