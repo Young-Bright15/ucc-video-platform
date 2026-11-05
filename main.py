@@ -293,12 +293,82 @@ def delete_course(course_id: int, db: Session = Depends(get_db), current_user: m
     return {"message": "Course deleted successfully."}
 
 @app.post("/topics/", status_code=status.HTTP_201_CREATED)
-def create_topic(topic: schemas.TopicCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_lecturer_or_ta)):
-    new_topic = models.Topic(**topic.dict())
+def create_topic(
+    CourseCode: str = Form(...),
+    TopicName: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_lecturer_or_ta)
+):
+    # 1. Find the course by CourseCode
+    course = db.query(models.Course).filter(models.Course.CourseCode == CourseCode).first()
+    if not course:
+        raise HTTPException(status_code=404, detail=f"Course with code '{CourseCode}' not found.")
+    
+    # 2. Check if topic already exists for this course
+    existing_topic = db.query(models.Topic).filter(
+        models.Topic.CourseID == course.CourseID,
+        models.Topic.TopicName == TopicName
+    ).first()
+    if existing_topic:
+        raise HTTPException(status_code=400, detail="This topic already exists under this course.")
+
+    # 3. Create the topic
+    new_topic = models.Topic(CourseID=course.CourseID, TopicName=TopicName)
     db.add(new_topic)
     db.commit()
     db.refresh(new_topic)
-    return new_topic
+    
+    return {
+        "message": "Topic created successfully!",
+        "TopicID": new_topic.TopicID,
+        "CourseCode": CourseCode,
+        "TopicName": new_topic.TopicName
+    }
+
+
+@app.post("/subtopics/", status_code=status.HTTP_201_CREATED)
+def create_subtopic(
+    CourseCode: str = Form(...),
+    TopicName: str = Form(...),
+    SubtopicName: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_lecturer_or_ta)
+):
+    # 1. Find the course
+    course = db.query(models.Course).filter(models.Course.CourseCode == CourseCode).first()
+    if not course:
+        raise HTTPException(status_code=404, detail=f"Course with code '{CourseCode}' not found.")
+
+    # 2. Find the topic under this course
+    topic = db.query(models.Topic).filter(
+        models.Topic.CourseID == course.CourseID,
+        models.Topic.TopicName == TopicName
+    ).first()
+    if not topic:
+        raise HTTPException(status_code=404, detail=f"Topic '{TopicName}' not found under course '{CourseCode}'.")
+
+    # 3. Check if subtopic already exists
+    existing_sub = db.query(models.Subtopic).filter(
+        models.Subtopic.TopicID == topic.TopicID,
+        models.Subtopic.SubtopicName == SubtopicName
+    ).first()
+    if existing_sub:
+        raise HTTPException(status_code=400, detail="This subtopic already exists under this topic.")
+
+    # 4. Create the subtopic
+    new_sub = models.Subtopic(TopicID=topic.TopicID, SubtopicName=SubtopicName)
+    db.add(new_sub)
+    db.commit()
+    db.refresh(new_sub)
+    
+    return {
+        "message": "Subtopic created successfully!",
+        "SubtopicID": new_sub.SubtopicID,
+        "CourseCode": CourseCode,
+        "TopicName": TopicName,
+        "SubtopicName": new_sub.SubtopicName
+    }
+
 
 @app.get("/courses/{course_id}/topics")
 def get_course_topics(course_id: int, db: Session = Depends(get_db)):
@@ -313,13 +383,6 @@ def delete_topic(topic_id: int, db: Session = Depends(get_db), current_user: mod
     db.commit()
     return {"message": "Topic deleted successfully."}
 
-@app.post("/subtopics/", status_code=status.HTTP_201_CREATED)
-def create_subtopic(subtopic: schemas.SubtopicCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_lecturer_or_ta)):
-    new_sub = models.Subtopic(**subtopic.dict())
-    db.add(new_sub)
-    db.commit()
-    db.refresh(new_sub)
-    return new_sub
 
 @app.get("/topics/{topic_id}/subtopics")
 def get_topic_subtopics(topic_id: int, db: Session = Depends(get_db)):
@@ -341,15 +404,48 @@ def delete_subtopic(subtopic_id: int, db: Session = Depends(get_db), current_use
 def upload_video(
     Title: str = Form(...),
     Description: str = Form(None),
-    SubtopicID: int = Form(...),
+    CourseCode: str = Form(...),       # e.g., "CSC 202"
+    TopicName: str = Form(...),        # e.g., "Data Structures"
+    SubtopicName: str = Form(...),     # e.g., "Binary Search Trees"
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_lecturer_or_ta)
 ):
+    # 1. Find or validate the Course by CourseCode
+    course = db.query(models.Course).filter(models.Course.CourseCode == CourseCode).first()
+    if not course:
+        raise HTTPException(status_code=404, detail=f"Course with code '{CourseCode}' not found. Create the course first.")
+
+    # 2. Find or create the Topic under this Course
+    topic = db.query(models.Topic).filter(
+        models.Topic.CourseID == course.CourseID, 
+        models.Topic.TopicName == TopicName
+    ).first()
+    
+    if not topic:
+        # Automatically create the topic if it doesn't exist yet
+        topic = models.Topic(CourseID=course.CourseID, TopicName=TopicName)
+        db.add(topic)
+        db.commit()
+        db.refresh(topic)
+
+    # 3. Find or create the Subtopic under this Topic
+    subtopic = db.query(models.Subtopic).filter(
+        models.Subtopic.TopicID == topic.TopicID, 
+        models.Subtopic.SubtopicName == SubtopicName
+    ).first()
+    
+    if not subtopic:
+        # Automatically create the subtopic if it doesn't exist yet
+        subtopic = models.Subtopic(TopicID=topic.TopicID, SubtopicName=SubtopicName)
+        db.add(subtopic)
+        db.commit()
+        db.refresh(subtopic)
+
+    # 4. Handle File Upload (Azure Blob or Local Fallback)
     file_ext = os.path.splitext(file.filename)[1]
     unique_filename = f"{uuid.uuid4()}{file_ext}"
     
-    # Upload to Azure Blob Storage if configured, otherwise fallback to local folder
     if blob_service_client:
         blob_client = blob_service_client.get_blob_client(container=CONTAINER_NAME, blob=unique_filename)
         blob_client.upload_blob(file.file, overwrite=True)
@@ -362,17 +458,27 @@ def upload_video(
             shutil.copyfileobj(file.file, buffer)
         file_path = local_path
 
+    # 5. Save the Video record linking to the resolved SubtopicID
     new_video = models.Video(
         Title=Title,
         Description=Description,
         FilePath=file_path,
-        SubtopicID=SubtopicID,
+        SubtopicID=subtopic.SubtopicID,
         UploadedBy=current_user.UserID
     )
     db.add(new_video)
     db.commit()
     db.refresh(new_video)
-    return new_video
+    
+    return {
+        "message": "Video uploaded successfully!",
+        "VideoID": new_video.VideoID,
+        "Title": new_video.Title,
+        "CourseCode": CourseCode,
+        "TopicName": TopicName,
+        "SubtopicName": SubtopicName,
+        "FilePath": file_path
+    }
 
 @app.get("/subtopics/{subtopic_id}/videos")
 def get_subtopic_videos(subtopic_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
