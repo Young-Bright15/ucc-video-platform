@@ -10,7 +10,6 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 import jwt  # PyJWT
-import auth
 
 # Project dependencies (assumes database.py, models.py, and schemas.py exist)
 from database import get_db, engine
@@ -54,31 +53,6 @@ if AZURE_STORAGE_CONNECTION_STRING:
     except Exception as e:
         print(f"Warning: Could not initialize Azure Blob Storage client: {e}")
 
-#-- THE STARTUP BOOTSTRAP CODE THAT CHECKS IF ADMIN ALREADY EXISTS IN THE DB ==#
-@app.post("/setup-initial-admin")
-def setup_initial_admin(data: schemas.UserCreate, db: Session = Depends(get_db)):
-    # Check specifically if an Admin already exists in the system
-    existing_admin = db.query(models.User).filter(models.User.RoleID == 1).first()
-    if existing_admin:
-        raise HTTPException(
-            status_code=400, 
-            detail="An admin account already exists in the system."
-        )
-    
-    # Create the initial admin user
-    hashed_password = auth.get_password_hash(data.Password)
-    initial_admin = models.User(
-        Username=data.Username,
-        Email=data.Email,
-        PasswordHash=hashed_password,
-        RoleID=1  # Assumes RoleID 1 is your Admin role
-    )
-    
-    db.add(initial_admin)
-    db.commit()
-    db.refresh(initial_admin)
-    
-    return {"message": "Initial admin created successfully!", "username": initial_admin.Username}
 # --- AUTHENTICATION & ROLE HELPERS ---
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -113,6 +87,34 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if user is None:
         raise credentials_exception
     return user
+
+
+#-- THE STARTUP BOOTSTRAP CODE THAT CHECKS IF ADMIN ALREADY EXISTS IN THE DB ==#
+@app.post("/setup-initial-admin")
+def setup_initial_admin(data: schemas.UserCreate, db: Session = Depends(get_db)):
+    # Check specifically if an Admin already exists in the system
+    existing_admin = db.query(models.User).filter(models.User.RoleID == 1).first()
+    if existing_admin:
+        raise HTTPException(
+            status_code=400, 
+            detail="An admin account already exists in the system."
+        )
+    
+    # Create the initial admin user
+    hashed_password = get_password_hash(data.Password)
+    initial_admin = models.User(
+        Username=data.Username,
+        Email=data.Email,
+        PasswordHash=hashed_password,
+        RoleID=1  # Assumes RoleID 1 is your Admin role
+    )
+    
+    db.add(initial_admin)
+    db.commit()
+    db.refresh(initial_admin)
+    
+    return {"message": "Initial admin created successfully!", "username": initial_admin.Username}
+
 
 def get_current_admin(current_user: models.User = Depends(get_current_user)) -> models.User:
     if current_user.RoleID != 1:
