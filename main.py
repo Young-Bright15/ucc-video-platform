@@ -12,7 +12,7 @@ from sqlalchemy import or_
 import jwt  # PyJWT
 
 # Project dependencies (assumes database.py, models.py, and schemas.py exist)
-from database import get_db
+from database import get_db, engine
 import models
 import schemas
 
@@ -21,6 +21,9 @@ app = FastAPI(
     version="1.0.0",
     description="Enterprise backend handling secure authentication, course structures, video streaming, and analytics."
 )
+
+#This creates the tables in the sql database if they don't exist yet.
+models.Base.metadata.create_all(bind=engine)
 
 # CORS Configuration
 app.add_middleware(
