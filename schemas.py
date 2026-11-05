@@ -7,6 +7,9 @@ class ChangePasswordRequest(BaseModel):
     old_password: str
     new_password: str
 
+class AdminResetPasswordRequest(BaseModel):
+    new_password: str
+    
 # --- User Schemas ---
 class UserCreate(BaseModel):
     Username: str
@@ -81,3 +84,4 @@ class VideoInteractionResponse(VideoInteractionCreate):
 
     class Config:
         from_attributes = True
+
