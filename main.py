@@ -23,20 +23,26 @@ app = FastAPI(
     description="Enterprise backend handling secure authentication, course structures, video streaming, and analytics."
 )
 
-#This creates the tables in the sql database if they don't exist yet.
-models.Base.metadata.create_all(bind=engine)
+# Initialize password hashing context globally
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Safe database initialization inside a startup event to prevent container boot timeouts
+@app.on_event("startup")
+def startup_event():
+    try:
+        models.Base.metadata.create_all(bind=engine)
+        print("Database tables verified/created successfully.")
+    except Exception as e:
+        print(f"Database initialization warning: {e}")
 
 # CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict to your teammate's frontend domain in production
+    allow_origins=["*"],  # Restrict to your frontend domain in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Initialize password hashing context globally
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT Security Configuration
 SECRET_KEY = os.getenv("SECRET_KEY", "your_super_secret_key_here")
@@ -60,12 +66,12 @@ if AZURE_STORAGE_CONNECTION_STRING:
 # --- AUTHENTICATION & ROLE HELPERS ---
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    # Use passlib / bcrypt hash checking logic matching your setup
-    pass
+    return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
-    # Use passlib / bcrypt hashing logic matching your setup
-    pass
+    # Truncate password safely to 72 bytes to prevent bcrypt ValueError limits
+    safe_password = password[:72]
+    return pwd_context.hash(safe_password)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
@@ -104,21 +110,21 @@ def setup_initial_admin(data: schemas.UserCreate, db: Session = Depends(get_db))
             detail="An admin account already exists in the system."
         )
     
-    # 2. Hash the password (adjust data.password or data.Password to match your schemas.py)
+    # 2. Hash the password with explicit field mapping
     password_to_hash = getattr(data, "password", None) or getattr(data, "Password", None)
     if not password_to_hash:
         raise HTTPException(
             status_code=400, 
             detail="Password is required."
         )
-    hashed_password = pwd_context.hash(password_to_hash)
+    hashed_password = get_password_hash(password_to_hash)
 
     # 3. Create the initial admin user model instance
     initial_admin = models.User(
         Username=getattr(data, "Username", None) or getattr(data, "username", None),
         Email=getattr(data, "Email", None) or getattr(data, "email", None),
         PasswordHash=hashed_password,
-        RoleID=1  # Assuming 1 represents your Admin role
+        RoleID=1  # Admin role
     )
     
     # 4. Save to database
@@ -170,8 +176,8 @@ def register_student(data: schemas.UserCreate, db: Session = Depends(get_db)):
             detail="Password is required."
         )
     
-    # 2. Hash the password securely using pwd_context
-    hashed_password = pwd_context.hash(password_to_hash)
+    # 2. Hash the password securely using get_password_hash helper
+    hashed_password = get_password_hash(password_to_hash)
     
     # 3. Check if username or email already exists
     username_val = getattr(data, "Username", None) or getattr(data, "username", None)
@@ -207,10 +213,11 @@ def register_student(data: schemas.UserCreate, db: Session = Depends(get_db)):
 
 @app.post("/admin/create-user", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
 def admin_create_user(user: schemas.UserCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    password_val = getattr(user, "password", None) or getattr(user, "Password", None)
     new_user = models.User(
         Username=user.Username,
         Email=user.Email,
-        PasswordHash=get_password_hash(user.Password),
+        PasswordHash=get_password_hash(password_val),
         RoleID=user.RoleID
     )
     db.add(new_user)
@@ -223,10 +230,11 @@ def create_ta(user: schemas.UserCreate, db: Session = Depends(get_db), current_u
     if current_user.RoleID != 2:
         raise HTTPException(status_code=403, detail="Only lecturers can create Teaching Assistants.")
     
+    password_val = getattr(user, "password", None) or getattr(user, "Password", None)
     new_user = models.User(
         Username=user.Username,
         Email=user.Email,
-        PasswordHash=get_password_hash(user.Password),
+        PasswordHash=get_password_hash(password_val),
         RoleID=3  # TA Role
     )
     db.add(new_user)
@@ -436,7 +444,6 @@ def search_platform(
 ):
     search_pattern = f"%{q}%"
     
-    # Explicit .order_by() included to satisfy SQL Server OFFSET/LIMIT requirements
     courses = db.query(models.Course).filter(
         or_(models.Course.CourseCode.ilike(search_pattern), models.Course.CourseName.ilike(search_pattern))
     ).order_by(models.Course.CourseID).offset(skip).limit(limit).all()
