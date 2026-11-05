@@ -10,6 +10,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 import jwt  # PyJWT
+from passlib.context import CryptContext
 
 # Project dependencies (assumes database.py, models.py, and schemas.py exist)
 from database import get_db, engine
@@ -92,7 +93,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 #-- THE STARTUP BOOTSTRAP CODE THAT CHECKS IF ADMIN ALREADY EXISTS IN THE DB ==#
 @app.post("/setup-initial-admin")
 def setup_initial_admin(data: schemas.UserCreate, db: Session = Depends(get_db)):
-    # Check specifically if an Admin already exists in the system
+    # 1. Check specifically if an Admin (RoleID == 1) already exists in the system
     existing_admin = db.query(models.User).filter(models.User.RoleID == 1).first()
     if existing_admin:
         raise HTTPException(
@@ -100,21 +101,33 @@ def setup_initial_admin(data: schemas.UserCreate, db: Session = Depends(get_db))
             detail="An admin account already exists in the system."
         )
     
-    # Create the initial admin user
-    hashed_password = get_password_hash(data.Password)
+    # 2. Hash the password (adjust data.password or data.Password to match your schemas.py)
+    password_to_hash = getattr(data, "password", None) or getattr(data, "Password", None)
+    if not password_to_hash:
+        raise HTTPException(
+            status_code=400, 
+            detail="Password is required."
+        )
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    hashed_password = pwd_context.hash(password_to_hash)
+    
+    # 3. Create the initial admin user model instance
     initial_admin = models.User(
-        Username=data.Username,
-        Email=data.Email,
+        Username=getattr(data, "Username", None) or getattr(data, "username", None),
+        Email=getattr(data, "Email", None) or getattr(data, "email", None),
         PasswordHash=hashed_password,
-        RoleID=1  # Assumes RoleID 1 is your Admin role
+        RoleID=1  # Assuming 1 represents your Admin role
     )
     
+    # 4. Save to database
     db.add(initial_admin)
     db.commit()
     db.refresh(initial_admin)
     
-    return {"message": "Initial admin created successfully!", "username": initial_admin.Username}
-
+    return {
+        "message": "Initial admin created successfully!", 
+        "username": initial_admin.Username
+    }
 
 def get_current_admin(current_user: models.User = Depends(get_current_user)) -> models.User:
     if current_user.RoleID != 1:
