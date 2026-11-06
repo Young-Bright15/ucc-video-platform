@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Str, Field
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
@@ -6,7 +6,7 @@ from datetime import datetime
 
 class UserCreate(BaseModel):
     Username: str = Field(..., min_length=3, max_length=50)
-    Email: Str
+    Email: str
     password: Optional[str] = Field(None, min_length=6, alias="Password")
     RoleID: Optional[int] = Field(2, description="Optional; defaults to Student (2) for public registrations.")
 
@@ -17,7 +17,7 @@ class UserCreate(BaseModel):
 class UserResponse(BaseModel):
     UserID: int
     Username: str
-    Email: Str
+    Email: str
     RoleID: int
 
     model_config = {
