@@ -19,6 +19,7 @@ class UserResponse(BaseModel):
     Username: str
     Email: str
     RoleID: int
+    CourseID: Optional[int] = None
 
     model_config = {
         "from_attributes": True

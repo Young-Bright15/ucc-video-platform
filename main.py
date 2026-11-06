@@ -18,7 +18,7 @@ import schemas
 
 app = FastAPI(
     title="University of Cape Coast Video Platform API",
-    version="2.2.0",
+    version="2.3.0",
     description="Enterprise production-grade backend handling secure authentication, course structures, atomic streaming, and analytics."
 )
 
@@ -185,8 +185,8 @@ def register_student(data: schemas.UserCreate, db: Session = Depends(get_db)):
 
 @app.post("/admin/create-user", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
 def admin_create_user(user: schemas.UserCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
-    if user.RoleID not in [1, 2, 3]:
-        raise HTTPException(status_code=400, detail="Invalid RoleID specified. Choose 1 (Admin), 2 (Student), or 3 (TA).")
+    if user.RoleID not in [1, 2, 3, 4]:
+        raise HTTPException(status_code=400, detail="Invalid RoleID specified.")
         
     password_val = getattr(user, "password", None) or getattr(user, "Password", None)
     if not password_val:

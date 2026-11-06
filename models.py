@@ -5,7 +5,6 @@ from database import Base
 
 datetime_utc = datetime.utcnow
 
-
 class Role(Base):
     __tablename__ = "Roles"
     RoleID = Column(Integer, primary_key=True, index=True)
@@ -25,10 +24,10 @@ class User(Base):
     
     role = relationship("Role", back_populates="users")
     
-    # TA assigned course relationship
+    # Direct relationship for Teaching Assistants to their assigned course
     course = relationship("Course", foreign_keys=[CourseID], backref="teaching_assistants")
     
-    # Courses created by this user (Lecturers/Admins)
+    # Courses created by Lecturers/Admins
     courses = relationship("Course", foreign_keys="[Course.CreatedBy]", back_populates="creator", cascade="all, delete-orphan")
     
     videos = relationship("Video", back_populates="uploader", cascade="all, delete-orphan")
@@ -42,7 +41,6 @@ class Course(Base):
     Description = Column(Text, nullable=True)
     CreatedBy = Column(Integer, ForeignKey("Users.UserID"), index=True, nullable=False)
 
-    # Corrected foreign key mapping matching Course.CreatedBy -> User.UserID
     creator = relationship("User", foreign_keys=[CreatedBy], back_populates="courses")
     topics = relationship("Topic", back_populates="course", cascade="all, delete-orphan")
 
@@ -78,7 +76,7 @@ class Video(Base):
     ViewsCount = Column(Integer, default=0, nullable=False)
 
     subtopic = relationship("Subtopic", back_populates="videos")
-    uploader = relationship("Video", back_populates="videos")
+    uploader = relationship("User", back_populates="videos")
     interactions = relationship("VideoInteraction", back_populates="video", cascade="all, delete-orphan")
 
 
