@@ -1,6 +1,7 @@
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 from typing import Optional, List
 
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form, Query
@@ -11,8 +12,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 import jwt  # PyJWT
 from passlib.context import CryptContext
-from azure.storage.blob import ContentSettings  # Ensure this is imported at the top of main.py
-
+from azure.storage.blob import ContentSettings, BlobServiceClient, generate_blob_sas, BlobSasPermissions
 
 from database import get_db, engine
 import models
@@ -20,8 +20,8 @@ import schemas
 
 app = FastAPI(
     title="University of Cape Coast Video Platform API",
-    version="2.3.0",
-    description="Enterprise production-grade backend handling secure authentication, course structures, atomic streaming, and analytics."
+    version="2.4.0",
+    description="Enterprise production-grade backend handling secure authentication, course structures, secure SAS video streaming, and analytics."
 )
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -61,7 +61,6 @@ CONTAINER_NAME = "uploaded-videos"
 blob_service_client = None
 if AZURE_STORAGE_CONNECTION_STRING:
     try:
-        from azure.storage.blob import BlobServiceClient
         blob_service_client = BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
     except Exception as e:
         print(f"Warning: Could not initialize Azure Blob Storage client: {e}")
@@ -77,7 +76,7 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=15))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -137,12 +136,13 @@ def get_current_lecturer_or_ta(current_user: models.User = Depends(get_current_u
     return current_user
 
 
-# --- CORE ENDPOINTS ---
+# --- CORE ENDPOINTS & COMPATIBILITY ALIASES ---
 
 @app.get("/")
 def root():
     return {"message": "UCC Video Platform API is live and operational."}
 
+@app.post("/auth/token")
 @app.post("/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.Username == form_data.username).first()
@@ -155,6 +155,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
+@app.post("/auth/register")
 @app.post("/register")
 def register_student(data: schemas.UserCreate, db: Session = Depends(get_db)):
     password_to_hash = getattr(data, "password", None) or getattr(data, "Password", None)
@@ -184,6 +185,17 @@ def register_student(data: schemas.UserCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_user)
     return {"message": "Student registered successfully!", "username": new_user.Username}
+
+@app.get("/auth/me")
+@app.get("/me")
+def get_current_user_profile(current_user: models.User = Depends(get_current_user)):
+    return {
+        "UserID": current_user.UserID,
+        "Username": current_user.Username,
+        "Email": current_user.Email,
+        "RoleID": current_user.RoleID,
+        "Role": current_user.Role.RoleName if hasattr(current_user, "Role") and current_user.Role else "User"
+    }
 
 @app.post("/admin/create-user", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
 def admin_create_user(user: schemas.UserCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
@@ -409,7 +421,7 @@ def delete_subtopic(subtopic_id: int, db: Session = Depends(get_db), current_use
     return {"message": "Subtopic deleted successfully."}
 
 
-# --- VIDEO UPLOADS, STREAMING, ANALYTICS & SEARCH ---
+# --- VIDEO UPLOADS, STREAMING / SAS, ANALYTICS & SEARCH ---
 
 @app.post("/videos/", status_code=status.HTTP_201_CREATED)
 def upload_video(
@@ -443,7 +455,6 @@ def upload_video(
     file_ext = os.path.splitext(file.filename)[1]
     unique_filename = f"{uuid.uuid4()}{file_ext}"
     
-    # Inside your upload_video function:
     if blob_service_client:
         blob_client = blob_service_client.get_blob_client(container=CONTAINER_NAME, blob=unique_filename)
         blob_client.upload_blob(
@@ -485,6 +496,56 @@ def upload_video(
 def get_subtopic_videos(subtopic_id: int, skip: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100), db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     return db.query(models.Video).filter(models.Video.SubtopicID == subtopic_id).order_by(models.Video.VideoID).offset(skip).limit(limit).all()
 
+@app.get("/videos/{video_id}/playback-url")
+def get_video_playback_url(
+    video_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    video = db.query(models.Video).filter(models.Video.VideoID == video_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found.")
+    
+    if not video.FilePath:
+        raise HTTPException(status_code=400, detail="Video file path is not configured.")
+
+    # Increment view count securely upon playback authorization
+    db.query(models.Video).filter(models.Video.VideoID == video_id).update(
+        {"ViewsCount": models.Video.ViewsCount + 1}
+    )
+    db.commit()
+
+    # If file is stored locally as a fallback
+    if not AZURE_STORAGE_CONNECTION_STRING or "blob.core.windows.net" not in video.FilePath:
+        return {"playback_url": video.FilePath}
+
+    # Generate short-lived Azure Blob SAS URL
+    try:
+        parsed_url = urlparse(video.FilePath)
+        path_parts = parsed_url.path.lstrip("/").split("/", 1)
+        if len(path_parts) < 2:
+            raise ValueError("Invalid blob path format")
+        container_name = path_parts[0]
+        blob_name = path_parts[1]
+
+        account_name = blob_service_client.account_name
+        account_key = blob_service_client.credential.account_key
+
+        sas_token = generate_blob_sas(
+            account_name=account_name,
+            container_name=container_name,
+            blob_name=blob_name,
+            account_key=account_key,
+            permission=BlobSasPermissions(read=True),
+            expiry=datetime.now(timezone.utc) + timedelta(minutes=60),
+            start=datetime.now(timezone.utc) - timedelta(minutes=5)
+        )
+
+        playback_url = f"{video.FilePath}?{sas_token}"
+        return {"playback_url": playback_url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate secure playback URL: {str(e)}")
+
 @app.get("/videos/{video_id}/stream")
 def stream_video(video_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     video = db.query(models.Video).filter(models.Video.VideoID == video_id).first()
@@ -522,20 +583,33 @@ def get_video_analytics(video_id: int, db: Session = Depends(get_db), current_us
         "UnhelpfulCount": unhelpful_count
     }
 
+@app.post("/videos/{video_id}/interact")
 @app.post("/videos/interact")
-def interact_video(interaction: schemas.VideoInteractionCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+def interact_video(
+    interaction: Optional[schemas.VideoInteractionCreate] = None,
+    video_id: Optional[int] = None,
+    is_helpful: Optional[bool] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    target_video_id = interaction.VideoID if interaction else video_id
+    target_is_helpful = interaction.IsHelpful if interaction else is_helpful
+
+    if target_video_id is None or target_is_helpful is None:
+        raise HTTPException(status_code=400, detail="Invalid interaction parameters.")
+
     existing = db.query(models.VideoInteraction).filter(
-        models.VideoInteraction.VideoID == interaction.VideoID,
+        models.VideoInteraction.VideoID == target_video_id,
         models.VideoInteraction.UserID == current_user.UserID
     ).first()
 
     if existing:
-        existing.IsHelpful = interaction.IsHelpful
+        existing.IsHelpful = target_is_helpful
     else:
         new_interaction = models.VideoInteraction(
-            VideoID=interaction.VideoID,
+            VideoID=target_video_id,
             UserID=current_user.UserID,
-            IsHelpful=interaction.IsHelpful
+            IsHelpful=target_is_helpful
         )
         db.add(new_interaction)
     db.commit()
