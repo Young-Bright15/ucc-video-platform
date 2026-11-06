@@ -168,12 +168,16 @@ def register_student(data: schemas.UserCreate, db: Session = Depends(get_db)):
     if existing_user:
         raise HTTPException(status_code=400, detail="Username or Email already registered.")
 
-    # SECURITY FIX: Force RoleID to 2 (Student) to block privilege escalation attacks during public signup
+    # DYNAMIC LOOKUP: Fetch the 'Student' RoleID directly from the Roles table
+    student_role = db.query(models.Role).filter(models.Role.RoleName == "Student").first()
+    if not student_role:
+        raise HTTPException(status_code=500, detail="Default student role not found in system.")
+
     new_user = models.User(
         Username=username_val,
         Email=email_val,
         PasswordHash=get_password_hash(password_to_hash),
-        RoleID=2  
+        RoleID=student_role.RoleID  # Dynamically assigned, zero hardcoding!
     )
     db.add(new_user)
     db.commit()
@@ -201,37 +205,81 @@ def admin_create_user(user: schemas.UserCreate, db: Session = Depends(get_db), c
     return new_user
 
 @app.post("/lecturer/create-ta", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
-def create_ta(user: schemas.UserCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_lecturer)):
+def create_ta(
+    user: schemas.UserCreate, 
+    course_code: str, 
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_lecturer)
+):
     password_val = getattr(user, "password", None) or getattr(user, "Password", None)
     if not password_val:
         raise HTTPException(status_code=400, detail="Password is required for TA creation.")
 
+    username_val = getattr(user, "Username", None) or getattr(user, "username", None)
+    email_val = getattr(user, "Email", None) or getattr(user, "email", None)
+
+    # 1. Verify that the course exists in the database
+    course = db.query(models.Course).filter(models.Course.CourseCode == course_code).first()
+    if not course:
+        raise HTTPException(status_code=404, detail=f"Course with code '{course_code}' does not exist.")
+
+    # 2. DYNAMIC ROLE LOOKUP: Fetch 'Teaching Assistant' RoleID securely
+    ta_role = db.query(models.Role).filter(models.Role.RoleName == "Teaching Assistant").first()
+    if not ta_role:
+        raise HTTPException(status_code=500, detail="Teaching Assistant role is not configured in the database.")
+
+    # 3. Check for existing user
+    existing_user = db.query(models.User).filter(
+        (models.User.Username == username_val) | (models.User.Email == email_val)
+    ).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username or Email already registered.")
+
+    # 4. Create the TA user
     new_user = models.User(
-        Username=user.Username,
-        Email=user.Email,
+        Username=username_val,
+        Email=email_val,
         PasswordHash=get_password_hash(password_val),
-        RoleID=3  # TA Role
+        RoleID=ta_role.RoleID  # Dynamic role ID lookup
     )
+    
+    # 5. Assign the course to the TA's relationship list
+    new_user.assigned_courses.append(course)
+
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
     return new_user
 
-@app.delete("/admin/users/{user_id}")
-def delete_user(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
-    # SECURITY FIX: Prevent admin from deleting their own account
-    if user_id == current_user.UserID:
+@app.delete("/admin/users/delete")
+def delete_user(
+    payload: schemas.DeleteUserRequest, 
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_admin)
+):
+    # 1. Find the target user by both Username and Email to ensure precise matching
+    target_user = db.query(models.User).filter(
+        models.User.Username == payload.Username,
+        models.User.Email == payload.Email
+    ).first()
+    
+    if not target_user:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"User with username '{payload.Username}' and email '{payload.Email}' not found."
+        )
+
+    # 2. Prevent admin from deleting their own account
+    if target_user.UserID == current_user.UserID:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, 
             detail="Action prohibited: You cannot delete your own active admin account."
         )
 
-    user = db.query(models.User).filter(models.User.UserID == user_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found.")
-    db.delete(user)
+    # 3. Delete the user safely
+    db.delete(target_user)
     db.commit()
-    return {"message": f"User ID {user_id} deleted successfully."}
+    return {"message": f"User '{payload.Username}' has been deleted successfully."}
 
 @app.post("/auth/change-password")
 def change_password(data: schemas.ChangePasswordRequest, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):

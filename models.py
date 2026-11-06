@@ -1,9 +1,26 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Table
 from sqlalchemy.orm import relationship
 from database import Base
 
 datetime_utc = datetime.utcnow
+
+# Association table for Teaching Assistants and Courses (Many-to-Many)
+ta_courses = Table(
+    'TACourses',
+    Base.metadata,
+    Column('UserID', Integer, ForeignKey('Users.UserID'), primary_key=True),
+    Column('CourseID', Integer, ForeignKey('Courses.CourseID'), primary_key=True)
+)
+
+
+class Role(Base):
+    __tablename__ = "Roles"
+    RoleID = Column(Integer, primary_key=True, index=True)
+    RoleName = Column(String(50), unique=True, nullable=False)
+
+    users = relationship("User", back_populates="role")
+
 
 class User(Base):
     __tablename__ = "Users"
@@ -11,11 +28,16 @@ class User(Base):
     Username = Column(String(50), unique=True, index=True, nullable=False)
     Email = Column(String(100), unique=True, index=True, nullable=False)
     PasswordHash = Column(String(255), nullable=False)
-    RoleID = Column(Integer, index=True, nullable=False)
+    RoleID = Column(Integer, ForeignKey("Roles.RoleID"), index=True, nullable=False)
     
+    # Relationships
+    role = relationship("Role", back_populates="users")
     courses = relationship("Course", back_populates="creator", cascade="all, delete-orphan")
     videos = relationship("Video", back_populates="uploader", cascade="all, delete-orphan")
     interactions = relationship("VideoInteraction", back_populates="user", cascade="all, delete-orphan")
+    
+    # Courses assigned as a Teaching Assistant
+    assigned_courses = relationship("Course", secondary=ta_courses, backref="teaching_assistants")
 
 
 class Course(Base):

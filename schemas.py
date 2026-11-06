@@ -24,6 +24,11 @@ class UserResponse(BaseModel):
         "from_attributes": True
     }
 
+
+class DeleteUserRequest(BaseModel):
+    Username: str
+    Email: str
+
 class ChangePasswordRequest(BaseModel):
     old_password: str
     new_password: str = Field(..., min_length=6)
