@@ -1,5 +1,6 @@
 import os
 import uuid
+import logging
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from typing import Optional, List
@@ -20,10 +21,11 @@ import schemas
 
 app = FastAPI(
     title="University of Cape Coast Video Platform API",
-    version="2.4.0",
+    version="2.5.0",
     description="Enterprise production-grade backend handling secure authentication, course structures, secure SAS video streaming, and analytics."
 )
 
+logger = logging.getLogger("uvicorn.error")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 @app.exception_handler(Exception)
@@ -509,12 +511,6 @@ def get_video_playback_url(
     if not video.FilePath:
         raise HTTPException(status_code=400, detail="Video file path is not configured.")
 
-    # Increment view count securely upon playback authorization
-    db.query(models.Video).filter(models.Video.VideoID == video_id).update(
-        {"ViewsCount": models.Video.ViewsCount + 1}
-    )
-    db.commit()
-
     # If file is stored locally as a fallback
     if not AZURE_STORAGE_CONNECTION_STRING or "blob.core.windows.net" not in video.FilePath:
         return {"playback_url": video.FilePath}
@@ -541,20 +537,36 @@ def get_video_playback_url(
         if not account_name or not account_key:
             raise ValueError("AccountName or AccountKey missing from Azure storage connection string.")
 
+        now = datetime.now(timezone.utc)
         sas_token = generate_blob_sas(
             account_name=account_name,
             container_name=container_name,
             blob_name=blob_name,
             account_key=account_key,
             permission=BlobSasPermissions(read=True),
-            expiry=datetime.now(timezone.utc) + timedelta(minutes=60),
-            start=datetime.now(timezone.utc) - timedelta(minutes=5)
+            expiry=now + timedelta(minutes=60),
+            start=now - timedelta(minutes=5)
         )
 
         playback_url = f"{video.FilePath}?{sas_token}"
         return {"playback_url": playback_url}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate secure playback URL: {str(e)}")
+        logger.error(f"SAS Token Generation Error for VideoID {video_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to generate secure playback URL.")
+
+@app.post("/videos/{video_id}/view")
+def record_video_view(
+    video_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    video = db.query(models.Video).filter(models.Video.VideoID == video_id).first()
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found.")
+    
+    video.ViewsCount = (video.ViewsCount or 0) + 1
+    db.commit()
+    return {"status": "success", "ViewsCount": video.ViewsCount}
 
 @app.get("/videos/{video_id}/stream")
 def stream_video(video_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
