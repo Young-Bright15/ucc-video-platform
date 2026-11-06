@@ -25,10 +25,12 @@ class User(Base):
     
     role = relationship("Role", back_populates="users")
     
-    # Explicitly specify foreign_keys to resolve the multiple paths ambiguity
+    # TA assigned course relationship
     course = relationship("Course", foreign_keys=[CourseID], backref="teaching_assistants")
     
+    # Courses created by this user (Lecturers/Admins)
     courses = relationship("Course", foreign_keys="[Course.CreatedBy]", back_populates="creator", cascade="all, delete-orphan")
+    
     videos = relationship("Video", back_populates="uploader", cascade="all, delete-orphan")
     interactions = relationship("VideoInteraction", back_populates="user", cascade="all, delete-orphan")
     
@@ -40,7 +42,8 @@ class Course(Base):
     Description = Column(Text, nullable=True)
     CreatedBy = Column(Integer, ForeignKey("Users.UserID"), index=True, nullable=False)
 
-    creator = relationship("User", foreign_keys="[User.CourseID]", back_populates="courses")
+    # Corrected foreign key mapping matching Course.CreatedBy -> User.UserID
+    creator = relationship("User", foreign_keys=[CreatedBy], back_populates="courses")
     topics = relationship("Topic", back_populates="course", cascade="all, delete-orphan")
 
 
@@ -75,7 +78,7 @@ class Video(Base):
     ViewsCount = Column(Integer, default=0, nullable=False)
 
     subtopic = relationship("Subtopic", back_populates="videos")
-    uploader = relationship("User", back_populates="videos")
+    uploader = relationship("Video", back_populates="videos")
     interactions = relationship("VideoInteraction", back_populates="video", cascade="all, delete-orphan")
 
 
