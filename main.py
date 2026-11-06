@@ -168,7 +168,6 @@ def register_student(data: schemas.UserCreate, db: Session = Depends(get_db)):
     if existing_user:
         raise HTTPException(status_code=400, detail="Username or Email already registered.")
 
-    # DYNAMIC LOOKUP: Fetch the 'Student' RoleID directly from the Roles table
     student_role = db.query(models.Role).filter(models.Role.RoleName == "Student").first()
     if not student_role:
         raise HTTPException(status_code=500, detail="Default student role not found in system.")
@@ -177,7 +176,7 @@ def register_student(data: schemas.UserCreate, db: Session = Depends(get_db)):
         Username=username_val,
         Email=email_val,
         PasswordHash=get_password_hash(password_to_hash),
-        RoleID=student_role.RoleID  # Dynamically assigned, zero hardcoding!
+        RoleID=student_role.RoleID
     )
     db.add(new_user)
     db.commit()
@@ -218,30 +217,26 @@ def create_ta(
     username_val = getattr(user, "Username", None) or getattr(user, "username", None)
     email_val = getattr(user, "Email", None) or getattr(user, "email", None)
 
-    # 1. Find the course by CourseCode to get its ID
     course = db.query(models.Course).filter(models.Course.CourseCode == course_code).first()
     if not course:
         raise HTTPException(status_code=404, detail=f"Course with code '{course_code}' does not exist.")
 
-    # 2. Dynamic Role Lookup for 'Teaching Assistant'
     ta_role = db.query(models.Role).filter(models.Role.RoleName == "Teaching Assistant").first()
     if not ta_role:
         raise HTTPException(status_code=500, detail="Teaching Assistant role is not configured in the database.")
 
-    # 3. Check for existing user
     existing_user = db.query(models.User).filter(
         (models.User.Username == username_val) | (models.User.Email == email_val)
     ).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Username or Email already registered.")
 
-    # 4. Create the TA user with the direct CourseID reference
     new_user = models.User(
         Username=username_val,
         Email=email_val,
         PasswordHash=get_password_hash(password_val),
         RoleID=ta_role.RoleID,
-        CourseID=course.CourseID  # Direct foreign key, zero junction table overhead!
+        CourseID=course.CourseID
     )
     
     db.add(new_user)
@@ -255,7 +250,6 @@ def delete_user(
     db: Session = Depends(get_db), 
     current_user: models.User = Depends(get_current_admin)
 ):
-    # 1. Find the target user by both Username and Email to ensure precise matching
     target_user = db.query(models.User).filter(
         models.User.Username == payload.Username,
         models.User.Email == payload.Email
@@ -267,14 +261,12 @@ def delete_user(
             detail=f"User with username '{payload.Username}' and email '{payload.Email}' not found."
         )
 
-    # 2. Prevent admin from deleting their own account
     if target_user.UserID == current_user.UserID:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, 
             detail="Action prohibited: You cannot delete your own active admin account."
         )
 
-    # 3. Delete the user safely
     db.delete(target_user)
     db.commit()
     return {"message": f"User '{payload.Username}' has been deleted successfully."}
@@ -492,7 +484,6 @@ def stream_video(video_id: int, db: Session = Depends(get_db), current_user: mod
     if not video:
         raise HTTPException(status_code=404, detail="Video not found.")
     
-    # Atomic view update to prevent race conditions under heavy traffic
     db.query(models.Video).filter(models.Video.VideoID == video_id).update(
         {"ViewsCount": models.Video.ViewsCount + 1}
     )
