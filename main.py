@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 import jwt  # PyJWT
 from passlib.context import CryptContext
+from azure.storage.blob import ContentSettings  # Ensure this is imported at the top of main.py
+
 
 from database import get_db, engine
 import models
@@ -441,9 +443,14 @@ def upload_video(
     file_ext = os.path.splitext(file.filename)[1]
     unique_filename = f"{uuid.uuid4()}{file_ext}"
     
+    # Inside your upload_video function:
     if blob_service_client:
         blob_client = blob_service_client.get_blob_client(container=CONTAINER_NAME, blob=unique_filename)
-        blob_client.upload_blob(file.file, overwrite=True)
+        blob_client.upload_blob(
+            file.file, 
+            overwrite=True,
+            content_settings=ContentSettings(content_type=file.content_type or "video/mp4")
+        )
         file_path = blob_client.url
     else:
         os.makedirs("uploaded_videos", exist_ok=True)
