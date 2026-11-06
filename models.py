@@ -10,7 +10,7 @@ ta_courses = Table(
     'TACourses',
     Base.metadata,
     Column('UserID', Integer, ForeignKey('Users.UserID'), primary_key=True),
-    Column('CourseID', Integer, ForeignKey('Courses.CourseID'), primary_key=True)
+    Column('CourseCode', String(20), ForeignKey('Courses.CourseCourseCode'), primary_key=True)
 )
 
 
@@ -30,15 +30,15 @@ class User(Base):
     PasswordHash = Column(String(255), nullable=False)
     RoleID = Column(Integer, ForeignKey("Roles.RoleID"), index=True, nullable=False)
     
+    # Direct course association (Nullable, so Students/Admins can have NULL here)
+    CourseID = Column(Integer, ForeignKey("Courses.CourseID"), index=True, nullable=True)
+    
     # Relationships
     role = relationship("Role", back_populates="users")
+    course = relationship("Course", backref="teaching_assistants") # Direct relationship to their assigned course
     courses = relationship("Course", back_populates="creator", cascade="all, delete-orphan")
     videos = relationship("Video", back_populates="uploader", cascade="all, delete-orphan")
     interactions = relationship("VideoInteraction", back_populates="user", cascade="all, delete-orphan")
-    
-    # Courses assigned as a Teaching Assistant
-    assigned_courses = relationship("Course", secondary=ta_courses, backref="teaching_assistants")
-
 
 class Course(Base):
     __tablename__ = "Courses"

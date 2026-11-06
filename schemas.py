@@ -8,7 +8,7 @@ class UserCreate(BaseModel):
     Username: str = Field(..., min_length=3, max_length=50)
     Email: str
     password: Optional[str] = Field(None, min_length=6, alias="Password")
-    RoleID: Optional[int] = Field(2, description="Optional; defaults to Student (2) for public registrations.")
+    RoleID: Optional[int] = Field(4, description="Optional; defaults to Student (2) for public registrations.")
 
     model_config = {
         "populate_by_name": True

@@ -218,12 +218,12 @@ def create_ta(
     username_val = getattr(user, "Username", None) or getattr(user, "username", None)
     email_val = getattr(user, "Email", None) or getattr(user, "email", None)
 
-    # 1. Verify that the course exists in the database
+    # 1. Find the course by CourseCode to get its ID
     course = db.query(models.Course).filter(models.Course.CourseCode == course_code).first()
     if not course:
         raise HTTPException(status_code=404, detail=f"Course with code '{course_code}' does not exist.")
 
-    # 2. DYNAMIC ROLE LOOKUP: Fetch 'Teaching Assistant' RoleID securely
+    # 2. Dynamic Role Lookup for 'Teaching Assistant'
     ta_role = db.query(models.Role).filter(models.Role.RoleName == "Teaching Assistant").first()
     if not ta_role:
         raise HTTPException(status_code=500, detail="Teaching Assistant role is not configured in the database.")
@@ -235,17 +235,15 @@ def create_ta(
     if existing_user:
         raise HTTPException(status_code=400, detail="Username or Email already registered.")
 
-    # 4. Create the TA user
+    # 4. Create the TA user with the direct CourseID reference
     new_user = models.User(
         Username=username_val,
         Email=email_val,
         PasswordHash=get_password_hash(password_val),
-        RoleID=ta_role.RoleID  # Dynamic role ID lookup
+        RoleID=ta_role.RoleID,
+        CourseID=course.CourseID  # Direct foreign key, zero junction table overhead!
     )
     
-    # 5. Assign the course to the TA's relationship list
-    new_user.assigned_courses.append(course)
-
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
