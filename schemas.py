@@ -1,66 +1,89 @@
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, EmailStr, Field
+from typing import Optional, List
 from datetime import datetime
 
+# --- USER SCHEMAS ---
 
-class ChangePasswordRequest(BaseModel):
-    old_password: str
-    new_password: str
-
-class AdminResetPasswordRequest(BaseModel):
-    new_password: str
-    
-# --- User Schemas ---
 class UserCreate(BaseModel):
-    Username: str
-    Email: str
-    Password: str
-    RoleID: int  # 1: Admin, 2: Lecturer, 3: TA, 4: Student
+    Username: str = Field(..., min_length=3, max_length=50)
+    Email: EmailStr
+    password: Optional[str] = Field(None, min_length=6, alias="Password")
+    RoleID: Optional[int] = Field(2, description="Optional; defaults to Student (2) for public registrations.")
+
+    model_config = {
+        "populate_by_name": True
+    }
 
 class UserResponse(BaseModel):
     UserID: int
     Username: str
-    Email: str
+    Email: EmailStr
     RoleID: int
 
-    class Config:
-        from_attributes = True
+    model_config = {
+        "from_attributes": True
+    }
 
-# --- Course Schemas ---
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str = Field(..., min_length=6)
+
+class AdminResetPasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=6)
+
+
+# --- COURSE SCHEMAS ---
+
 class CourseCreate(BaseModel):
+    CourseCode: str = Field(..., min_length=2, max_length=20)
+    CourseName: str = Field(..., min_length=2, max_length=100)
+    Description: Optional[str] = None
+
+class CourseResponse(BaseModel):
+    CourseID: int
     CourseCode: str
     CourseName: str
     Description: Optional[str] = None
-
-class CourseResponse(CourseCreate):
-    CourseID: int
     CreatedBy: int
 
-    class Config:
-        from_attributes = True
+    model_config = {
+        "from_attributes": True
+    }
 
-# --- Topic & Subtopic Schemas ---
+
+# --- TOPIC & SUBTOPIC SCHEMAS ---
+
 class TopicCreate(BaseModel):
+    CourseCode: str
+    TopicName: str = Field(..., min_length=2, max_length=100)
+
+class TopicResponse(BaseModel):
+    TopicID: int
     CourseID: int
     TopicName: str
 
-class TopicResponse(TopicCreate):
-    TopicID: int
+    model_config = {
+        "from_attributes": True
+    }
 
-    class Config:
-        from_attributes = True
 
 class SubtopicCreate(BaseModel):
+    CourseCode: str
+    TopicName: str
+    SubtopicName: str = Field(..., min_length=2, max_length=100)
+
+class SubtopicResponse(BaseModel):
+    SubtopicID: int
     TopicID: int
     SubtopicName: str
 
-class SubtopicResponse(SubtopicCreate):
-    SubtopicID: int
+    model_config = {
+        "from_attributes": True
+    }
 
-    class Config:
-        from_attributes = True
 
-# --- Video Schemas ---
+# --- VIDEO & INTERACTION SCHEMAS ---
+
 class VideoResponse(BaseModel):
     VideoID: int
     Title: str
@@ -68,20 +91,23 @@ class VideoResponse(BaseModel):
     FilePath: str
     SubtopicID: int
     UploadedBy: int
+    ViewsCount: int
 
-    class Config:
-        from_attributes = True
+    model_config = {
+        "from_attributes": True
+    }
 
-# --- Video Interaction Schemas ---
 class VideoInteractionCreate(BaseModel):
     VideoID: int
-    IsHelpful: bool
+    IsHelpful: bool  # True for helpful, False for unhelpful
 
-class VideoInteractionResponse(VideoInteractionCreate):
+class VideoInteractionResponse(BaseModel):
     InteractionID: int
     UserID: int
+    VideoID: int
+    IsHelpful: Optional[bool] = None
     WatchedAt: datetime
 
-    class Config:
-        from_attributes = True
-
+    model_config = {
+        "from_attributes": True
+    }

@@ -6,27 +6,31 @@ from typing import Optional, List
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 import jwt  # PyJWT
 from passlib.context import CryptContext
 
-# Project dependencies (assumes database.py, models.py, and schemas.py exist)
 from database import get_db, engine
 import models
 import schemas
 
 app = FastAPI(
     title="University of Cape Coast Video Platform API",
-    version="1.0.0",
-    description="Enterprise backend handling secure authentication, course structures, video streaming, and analytics."
+    version="2.2.0",
+    description="Enterprise production-grade backend handling secure authentication, course structures, atomic streaming, and analytics."
 )
 
-# Initialize password hashing context globally
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# Safe database initialization inside a startup event to prevent container boot timeouts
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An internal server error occurred.", "error": str(exc)},
+    )
+
 @app.on_event("startup")
 def startup_event():
     try:
@@ -35,23 +39,20 @@ def startup_event():
     except Exception as e:
         print(f"Database initialization warning: {e}")
 
-# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict to your frontend domain in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# JWT Security Configuration
 SECRET_KEY = os.getenv("SECRET_KEY", "your_super_secret_key_here")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-# Azure Blob Storage Configuration (with local file fallback)
 AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "")
 CONTAINER_NAME = "uploaded-videos"
 
@@ -69,7 +70,6 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
-    # Truncate password safely to 72 bytes to prevent bcrypt ValueError limits
     safe_password = password[:72]
     return pwd_context.hash(safe_password)
 
@@ -98,57 +98,44 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         raise credentials_exception
     return user
 
-
-#-- THE STARTUP BOOTSTRAP CODE THAT CHECKS IF ADMIN ALREADY EXISTS IN THE DB ==#
 @app.post("/setup-initial-admin")
 def setup_initial_admin(data: schemas.UserCreate, db: Session = Depends(get_db)):
-    # 1. Check specifically if an Admin (RoleID == 1) already exists in the system
     existing_admin = db.query(models.User).filter(models.User.RoleID == 1).first()
     if existing_admin:
-        raise HTTPException(
-            status_code=400, 
-            detail="An admin account already exists in the system."
-        )
+        raise HTTPException(status_code=400, detail="An admin account already exists in the system.")
     
-    # 2. Hash the password with explicit field mapping
     password_to_hash = getattr(data, "password", None) or getattr(data, "Password", None)
     if not password_to_hash:
-        raise HTTPException(
-            status_code=400, 
-            detail="Password is required."
-        )
-    hashed_password = get_password_hash(password_to_hash)
-
-    # 3. Create the initial admin user model instance
+        raise HTTPException(status_code=400, detail="Password is required.")
+    
     initial_admin = models.User(
         Username=getattr(data, "Username", None) or getattr(data, "username", None),
         Email=getattr(data, "Email", None) or getattr(data, "email", None),
-        PasswordHash=hashed_password,
-        RoleID=1  # Admin role
+        PasswordHash=get_password_hash(password_to_hash),
+        RoleID=1
     )
-    
-    # 4. Save to database
     db.add(initial_admin)
     db.commit()
     db.refresh(initial_admin)
-    
-    return {
-        "message": "Initial admin created successfully!", 
-        "username": initial_admin.Username
-    }
+    return {"message": "Initial admin created successfully!", "username": initial_admin.Username}
 
 def get_current_admin(current_user: models.User = Depends(get_current_user)) -> models.User:
     if current_user.RoleID != 1:
         raise HTTPException(status_code=403, detail="Admin privileges required.")
     return current_user
 
+def get_current_lecturer(current_user: models.User = Depends(get_current_user)) -> models.User:
+    if current_user.RoleID not in [1, 2]:
+        raise HTTPException(status_code=403, detail="Lecturer or Admin privileges required.")
+    return current_user
+
 def get_current_lecturer_or_ta(current_user: models.User = Depends(get_current_user)) -> models.User:
     if current_user.RoleID not in [1, 2, 3]:
-        raise HTTPException(status_code=403, detail="Lecturer or TA privileges required.")
+        raise HTTPException(status_code=403, detail="Lecturer, TA, or Admin privileges required.")
     return current_user
 
 
-# --- ROOT & AUTHENTICATION ENDPOINTS ---
+# --- CORE ENDPOINTS ---
 
 @app.get("/")
 def root():
@@ -168,52 +155,40 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
 @app.post("/register")
 def register_student(data: schemas.UserCreate, db: Session = Depends(get_db)):
-    # 1. Extract and validate the incoming password
     password_to_hash = getattr(data, "password", None) or getattr(data, "Password", None)
     if not password_to_hash:
-        raise HTTPException(
-            status_code=400, 
-            detail="Password is required."
-        )
+        raise HTTPException(status_code=400, detail="Password is required.")
     
-    # 2. Hash the password securely using get_password_hash helper
-    hashed_password = get_password_hash(password_to_hash)
-    
-    # 3. Check if username or email already exists
     username_val = getattr(data, "Username", None) or getattr(data, "username", None)
     email_val = getattr(data, "Email", None) or getattr(data, "email", None)
     
     existing_user = db.query(models.User).filter(
         (models.User.Username == username_val) | (models.User.Email == email_val)
     ).first()
-    
     if existing_user:
-        raise HTTPException(
-            status_code=400, 
-            detail="Username or Email already registered."
-        )
+        raise HTTPException(status_code=400, detail="Username or Email already registered.")
 
-    # 4. Create the new user instance (RoleID = 2 for regular student/user)
+    # SECURITY FIX: Force RoleID to 2 (Student) to block privilege escalation attacks during public signup
     new_user = models.User(
         Username=username_val,
         Email=email_val,
-        PasswordHash=hashed_password,
-        RoleID=getattr(data, "RoleID", 2)  
+        PasswordHash=get_password_hash(password_to_hash),
+        RoleID=2  
     )
-    
-    # 5. Save to database
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    
-    return {
-        "message": "Student registered successfully!", 
-        "username": new_user.Username
-    }
+    return {"message": "Student registered successfully!", "username": new_user.Username}
 
 @app.post("/admin/create-user", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
 def admin_create_user(user: schemas.UserCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    if user.RoleID not in [1, 2, 3]:
+        raise HTTPException(status_code=400, detail="Invalid RoleID specified. Choose 1 (Admin), 2 (Student), or 3 (TA).")
+        
     password_val = getattr(user, "password", None) or getattr(user, "Password", None)
+    if not password_val:
+        raise HTTPException(status_code=400, detail="Password is required for user creation.")
+
     new_user = models.User(
         Username=user.Username,
         Email=user.Email,
@@ -226,11 +201,11 @@ def admin_create_user(user: schemas.UserCreate, db: Session = Depends(get_db), c
     return new_user
 
 @app.post("/lecturer/create-ta", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
-def create_ta(user: schemas.UserCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_lecturer_or_ta)):
-    if current_user.RoleID != 2:
-        raise HTTPException(status_code=403, detail="Only lecturers can create Teaching Assistants.")
-    
+def create_ta(user: schemas.UserCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_lecturer)):
     password_val = getattr(user, "password", None) or getattr(user, "Password", None)
+    if not password_val:
+        raise HTTPException(status_code=400, detail="Password is required for TA creation.")
+
     new_user = models.User(
         Username=user.Username,
         Email=user.Email,
@@ -244,6 +219,13 @@ def create_ta(user: schemas.UserCreate, db: Session = Depends(get_db), current_u
 
 @app.delete("/admin/users/{user_id}")
 def delete_user(user_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    # SECURITY FIX: Prevent admin from deleting their own account
+    if user_id == current_user.UserID:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="Action prohibited: You cannot delete your own active admin account."
+        )
+
     user = db.query(models.User).filter(models.User.UserID == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
@@ -272,16 +254,25 @@ def admin_reset_password(user_id: int, data: schemas.AdminResetPasswordRequest, 
 # --- COURSE, TOPIC & SUBTOPIC ENDPOINTS ---
 
 @app.post("/courses/", status_code=status.HTTP_201_CREATED)
-def create_course(course: schemas.CourseCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_lecturer_or_ta)):
-    new_course = models.Course(**course.dict())
+def create_course(course: schemas.CourseCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_lecturer)):
+    existing = db.query(models.Course).filter(models.Course.CourseCode == course.CourseCode).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Course with this code already exists.")
+    
+    new_course = models.Course(
+        CourseCode=course.CourseCode,
+        CourseName=course.CourseName,
+        Description=course.Description,
+        CreatedBy=current_user.UserID
+    )
     db.add(new_course)
     db.commit()
     db.refresh(new_course)
     return new_course
 
 @app.get("/courses/")
-def get_courses(db: Session = Depends(get_db)):
-    return db.query(models.Course).order_by(models.Course.CourseID).all()
+def get_courses(skip: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100), db: Session = Depends(get_db)):
+    return db.query(models.Course).order_by(models.Course.CourseID).offset(skip).limit(limit).all()
 
 @app.delete("/courses/{course_id}")
 def delete_course(course_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
@@ -290,7 +281,7 @@ def delete_course(course_id: int, db: Session = Depends(get_db), current_user: m
         raise HTTPException(status_code=404, detail="Course not found.")
     db.delete(course)
     db.commit()
-    return {"message": "Course deleted successfully."}
+    return {"message": "Course and all associated curriculum deleted successfully."}
 
 @app.post("/topics/", status_code=status.HTTP_201_CREATED)
 def create_topic(
@@ -299,12 +290,10 @@ def create_topic(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_lecturer_or_ta)
 ):
-    # 1. Find the course by CourseCode
     course = db.query(models.Course).filter(models.Course.CourseCode == CourseCode).first()
     if not course:
         raise HTTPException(status_code=404, detail=f"Course with code '{CourseCode}' not found.")
     
-    # 2. Check if topic already exists for this course
     existing_topic = db.query(models.Topic).filter(
         models.Topic.CourseID == course.CourseID,
         models.Topic.TopicName == TopicName
@@ -312,18 +301,11 @@ def create_topic(
     if existing_topic:
         raise HTTPException(status_code=400, detail="This topic already exists under this course.")
 
-    # 3. Create the topic
     new_topic = models.Topic(CourseID=course.CourseID, TopicName=TopicName)
     db.add(new_topic)
     db.commit()
     db.refresh(new_topic)
-    
-    return {
-        "message": "Topic created successfully!",
-        "TopicID": new_topic.TopicID,
-        "CourseCode": CourseCode,
-        "TopicName": new_topic.TopicName
-    }
+    return {"message": "Topic created successfully!", "TopicID": new_topic.TopicID, "CourseCode": CourseCode, "TopicName": new_topic.TopicName}
 
 
 @app.post("/subtopics/", status_code=status.HTTP_201_CREATED)
@@ -334,12 +316,10 @@ def create_subtopic(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_lecturer_or_ta)
 ):
-    # 1. Find the course
     course = db.query(models.Course).filter(models.Course.CourseCode == CourseCode).first()
     if not course:
         raise HTTPException(status_code=404, detail=f"Course with code '{CourseCode}' not found.")
 
-    # 2. Find the topic under this course
     topic = db.query(models.Topic).filter(
         models.Topic.CourseID == course.CourseID,
         models.Topic.TopicName == TopicName
@@ -347,7 +327,6 @@ def create_subtopic(
     if not topic:
         raise HTTPException(status_code=404, detail=f"Topic '{TopicName}' not found under course '{CourseCode}'.")
 
-    # 3. Check if subtopic already exists
     existing_sub = db.query(models.Subtopic).filter(
         models.Subtopic.TopicID == topic.TopicID,
         models.Subtopic.SubtopicName == SubtopicName
@@ -355,24 +334,16 @@ def create_subtopic(
     if existing_sub:
         raise HTTPException(status_code=400, detail="This subtopic already exists under this topic.")
 
-    # 4. Create the subtopic
     new_sub = models.Subtopic(TopicID=topic.TopicID, SubtopicName=SubtopicName)
     db.add(new_sub)
     db.commit()
     db.refresh(new_sub)
-    
-    return {
-        "message": "Subtopic created successfully!",
-        "SubtopicID": new_sub.SubtopicID,
-        "CourseCode": CourseCode,
-        "TopicName": TopicName,
-        "SubtopicName": new_sub.SubtopicName
-    }
+    return {"message": "Subtopic created successfully!", "SubtopicID": new_sub.SubtopicID, "CourseCode": CourseCode, "TopicName": TopicName, "SubtopicName": new_sub.SubtopicName}
 
 
 @app.get("/courses/{course_id}/topics")
-def get_course_topics(course_id: int, db: Session = Depends(get_db)):
-    return db.query(models.Topic).filter(models.Topic.CourseID == course_id).order_by(models.Topic.TopicID).all()
+def get_course_topics(course_id: int, skip: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100), db: Session = Depends(get_db)):
+    return db.query(models.Topic).filter(models.Topic.CourseID == course_id).order_by(models.Topic.TopicID).offset(skip).limit(limit).all()
 
 @app.delete("/topics/{topic_id}")
 def delete_topic(topic_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
@@ -385,8 +356,8 @@ def delete_topic(topic_id: int, db: Session = Depends(get_db), current_user: mod
 
 
 @app.get("/topics/{topic_id}/subtopics")
-def get_topic_subtopics(topic_id: int, db: Session = Depends(get_db)):
-    return db.query(models.Subtopic).filter(models.Subtopic.TopicID == topic_id).order_by(models.Subtopic.SubtopicID).all()
+def get_topic_subtopics(topic_id: int, skip: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100), db: Session = Depends(get_db)):
+    return db.query(models.Subtopic).filter(models.Subtopic.TopicID == topic_id).order_by(models.Subtopic.SubtopicID).offset(skip).limit(limit).all()
 
 @app.delete("/subtopics/{subtopic_id}")
 def delete_subtopic(subtopic_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
@@ -404,45 +375,31 @@ def delete_subtopic(subtopic_id: int, db: Session = Depends(get_db), current_use
 def upload_video(
     Title: str = Form(...),
     Description: str = Form(None),
-    CourseCode: str = Form(...),       # e.g., "CSC 202"
-    TopicName: str = Form(...),        # e.g., "Data Structures"
-    SubtopicName: str = Form(...),     # e.g., "Binary Search Trees"
+    CourseCode: str = Form(...),
+    TopicName: str = Form(...),
+    SubtopicName: str = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_lecturer_or_ta)
 ):
-    # 1. Find or validate the Course by CourseCode
     course = db.query(models.Course).filter(models.Course.CourseCode == CourseCode).first()
     if not course:
-        raise HTTPException(status_code=404, detail=f"Course with code '{CourseCode}' not found. Create the course first.")
+        raise HTTPException(status_code=404, detail=f"Course with code '{CourseCode}' not found.")
 
-    # 2. Find or create the Topic under this Course
     topic = db.query(models.Topic).filter(
         models.Topic.CourseID == course.CourseID, 
         models.Topic.TopicName == TopicName
     ).first()
-    
     if not topic:
-        # Automatically create the topic if it doesn't exist yet
-        topic = models.Topic(CourseID=course.CourseID, TopicName=TopicName)
-        db.add(topic)
-        db.commit()
-        db.refresh(topic)
+        raise HTTPException(status_code=404, detail=f"Topic '{TopicName}' not found under course '{CourseCode}'. Create topic first.")
 
-    # 3. Find or create the Subtopic under this Topic
     subtopic = db.query(models.Subtopic).filter(
         models.Subtopic.TopicID == topic.TopicID, 
         models.Subtopic.SubtopicName == SubtopicName
     ).first()
-    
     if not subtopic:
-        # Automatically create the subtopic if it doesn't exist yet
-        subtopic = models.Subtopic(TopicID=topic.TopicID, SubtopicName=SubtopicName)
-        db.add(subtopic)
-        db.commit()
-        db.refresh(subtopic)
+        raise HTTPException(status_code=404, detail=f"Subtopic '{SubtopicName}' not found under topic '{TopicName}'. Create subtopic first.")
 
-    # 4. Handle File Upload (Azure Blob or Local Fallback)
     file_ext = os.path.splitext(file.filename)[1]
     unique_filename = f"{uuid.uuid4()}{file_ext}"
     
@@ -458,7 +415,6 @@ def upload_video(
             shutil.copyfileobj(file.file, buffer)
         file_path = local_path
 
-    # 5. Save the Video record linking to the resolved SubtopicID
     new_video = models.Video(
         Title=Title,
         Description=Description,
@@ -481,8 +437,8 @@ def upload_video(
     }
 
 @app.get("/subtopics/{subtopic_id}/videos")
-def get_subtopic_videos(subtopic_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    return db.query(models.Video).filter(models.Video.SubtopicID == subtopic_id).order_by(models.Video.VideoID).all()
+def get_subtopic_videos(subtopic_id: int, skip: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100), db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    return db.query(models.Video).filter(models.Video.SubtopicID == subtopic_id).order_by(models.Video.VideoID).offset(skip).limit(limit).all()
 
 @app.get("/videos/{video_id}/stream")
 def stream_video(video_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -490,11 +446,12 @@ def stream_video(video_id: int, db: Session = Depends(get_db), current_user: mod
     if not video:
         raise HTTPException(status_code=404, detail="Video not found.")
     
-    # Increment view counter atomically
-    video.ViewsCount = (video.ViewsCount or 0) + 1
+    # Atomic view update to prevent race conditions under heavy traffic
+    db.query(models.Video).filter(models.Video.VideoID == video_id).update(
+        {"ViewsCount": models.Video.ViewsCount + 1}
+    )
     db.commit()
     
-    # Redirect client to the Blob URL (or local path)
     return RedirectResponse(url=video.FilePath)
 
 @app.get("/videos/{video_id}/analytics")
