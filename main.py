@@ -528,8 +528,18 @@ def get_video_playback_url(
         container_name = path_parts[0]
         blob_name = path_parts[1]
 
-        account_name = blob_service_client.account_name
-        account_key = blob_service_client.credential.account_key
+        # Robustly parse AccountName and AccountKey from the connection string
+        conn_dict = {}
+        for item in AZURE_STORAGE_CONNECTION_STRING.split(";"):
+            if "=" in item:
+                k, v = item.split("=", 1)
+                conn_dict[k.strip()] = v.strip()
+        
+        account_name = conn_dict.get("AccountName")
+        account_key = conn_dict.get("AccountKey")
+
+        if not account_name or not account_key:
+            raise ValueError("AccountName or AccountKey missing from Azure storage connection string.")
 
         sas_token = generate_blob_sas(
             account_name=account_name,
