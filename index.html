@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UCC Academic Video Platform</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        ucc: {
+                            navy: '#002147',
+                            gold: '#D4AF37',
+                            lightNavy: '#003366',
+                            accent: '#2563eb'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Alpine.js CDN -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        [x-cloak] { display: none !important; }
+        .glass-header {
+            backdrop-filter: blur(8px);
+            background-color: rgba(0, 33, 71, 0.95);
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans min-h-screen flex flex-col" x-data="app()" x-init="initApp()" x-cloak>
+
+    <!-- TOAST NOTIFICATIONS -->
+    <div class="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full">
+        <template x-for="toast in toasts" :key="toast.id">
+            <div :class="{
+                'bg-emerald-600 text-white': toast.type === 'success',
+                'bg-rose-600 text-white': toast.type === 'error',
+                'bg-blue-600 text-white': toast.type === 'info'
+            }" class="px-4 py-3 rounded-xl shadow-lg flex items-center justify-between transition-all duration-300 transform translate-y-0">
+                <div class="flex items-center gap-3">
+                    <i :class="{
+                        'fa-solid fa-circle-check': toast.type === 'success',
+                        'fa-solid fa-triangle-exclamation': toast.type === 'error',
+                        'fa-solid fa-circle-info': toast.type === 'info'
+                    }"></i>
+                    <span class="text-sm font-medium" x-text="toast.message"></span>
+                </div>
+                <button @click="removeToast(toast.id)" class="text-white/80 hover:text-white ml-3">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+        </template>
+    </div>
+
+    <!-- GLOBAL NAVBAR -->
+    <header class="glass-header text-white sticky top-0 z-40 border-b border-slate-700/50 shadow-lg">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-3 cursor-pointer" @click="activeTab = 'dashboard'">
+                <div class="w-10 h-10 bg-white rounded-lg flex items-center justify-center font-extrabold text-ucc-navy text-xl shadow-md border-2 border-ucc-gold">
+                    UCC
+                </div>
+                <div>
+                    <h1 class="font-bold text-lg leading-tight tracking-wide">Academic Stream</h1>
+                    <p class="text-xs text-slate-300 font-medium">University of Cape Coast</p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <!-- API URL Settings Button -->
+                <button @click="showApiModal = true" class="p-2 text-slate-300 hover:text-white rounded-lg hover:bg-white/10 transition" title="API Configuration">
+                    <i class="fa-solid fa-gear"></i>
+                </button>
+
+                <!-- Auth Navigation -->
+                <template x-if="!token">
+                    <div class="flex items-center gap-2">
+                        <button @click="authMode = 'login'; showAuthModal = true" class="px-4 py-2 text-sm font-semibold rounded-lg text-white hover:bg-white/10 transition">Log In</button>
+                        <button @click="authMode = 'register'; showAuthModal = true" class="px-4 py-2 text-sm font-semibold rounded-lg bg-ucc-gold text-ucc-navy hover:bg-amber-400 transition shadow">Register</button>
+                    </div>
+                </template>
+
+                <template x-if="token">
+                    <div class="flex items-center gap-4">
+                        <div class="hidden sm:flex items-center gap-3 bg-white/10 px-3 py-1.5 rounded-full border border-white/10">
+                            <i class="fa-solid fa-circle-user text-ucc-gold text-lg"></i>
+                            <div class="text-xs">
+                                <p class="font-semibold text-white" x-text="username"></p>
+                                <span class="uppercase text-[10px] tracking-wider px-1.5 py-0.5 rounded font-bold"
+                                      :class="{
+                                          'bg-purple-500/30 text-purple-200': roleId == 1,
+                                          'bg-blue-500/30 text-blue-200': roleId == 2,
+                                          'bg-emerald-500/30 text-emerald-200': roleId == 3,
+                                          'bg-amber-500/30 text-amber-200': roleId == 4
+                                      }" x-text="getRoleName(roleId)"></span>
+                            </div>
+                        </div>
+                        <button @click="logout()" class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-rose-600/80 hover:bg-rose-600 text-white transition flex items-center gap-1.5 shadow">
+                            <i class="fa-solid fa-right-from-bracket"></i>
+                            <span class="hidden sm:inline">Logout</span>
+                        </button>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </header>
+
+    <!-- MAIN CONTAINER -->
+    <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+        <!-- SEARCH BAR -->
+        <div class="mb-8">
+            <div class="relative max-w-2xl mx-auto">
+                <input type="text" x-model="searchQuery" @keyup.enter="performSearch()" placeholder="Search courses, modules, or lecture topics..." 
+                       class="w-full pl-12 pr-28 py-3.5 bg-white border border-slate-200 rounded-2xl shadow-sm focus:outline-none focus:ring-2 focus:ring-ucc-accent text-sm">
+                <i class="fa-solid fa-magnifying-glass absolute left-4 top-4 text-slate-400"></i>
+                <button @click="performSearch()" class="absolute right-2 top-2 px-5 py-2 bg-ucc-navy text-white text-xs font-semibold rounded-xl hover:bg-ucc-lightNavy transition shadow">
+                    Search
+                </button>
+            </div>
+        </div>
+
+        <!-- SEARCH RESULTS PANEL -->
+        <template x-if="searchResults">
+            <section class="mb-10 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-lg font-bold text-slate-800">Search Results for "<span x-text="searchResults.query"></span>"</h2>
+                    <button @click="searchResults = null" class="text-xs text-slate-500 hover:text-slate-800">Clear</button>
+                </div>
+                <div class="grid md:grid-cols-2 gap-6">
+                    <div>
+                        <h3 class="text-xs font-bold uppercase text-slate-400 mb-3 tracking-wider">Courses Found</h3>
+                        <div class="space-y-2">
+                            <template x-for="c in searchResults.courses" :key="c.CourseID">
+                                <div class="p-3 bg-slate-50 rounded-xl border border-slate-100 flex justify-between items-center">
+                                    <div>
+                                        <span class="text-xs font-bold text-ucc-navy" x-text="c.CourseCode"></span>
+                                        <p class="text-sm font-semibold text-slate-800" x-text="c.CourseName"></p>
+                                    </div>
+                                </div>
+                            </template>
+                            <template x-if="!searchResults.courses || searchResults.courses.length === 0">
+                                <p class="text-xs text-slate-400 italic">No matching courses.</p>
+                            </template>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 class="text-xs font-bold uppercase text-slate-400 mb-3 tracking-wider">Videos Found</h3>
+                        <div class="space-y-2">
+                            <template x-for="v in searchResults.videos" :key="v.VideoID">
+                                <div class="p-3 bg-slate-50 rounded-xl border border-slate-100 flex justify-between items-center">
+                                    <div>
+                                        <p class="text-sm font-semibold text-slate-800" x-text="v.Title"></p>
+                                        <p class="text-xs text-slate-500 line-clamp-1" x-text="v.Description"></p>
+                                    </div>
+                                    <button @click="playVideo(v)" class="px-3 py-1 bg-ucc-accent text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition">
+                                        Watch
+                                    </button>
+                                </div>
+                            </template>
+                            <template x-if="!searchResults.videos || searchResults.videos.length === 0">
+                                <p class="text-xs text-slate-400 italic">No matching videos.</p>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </template>
+
+        <!-- PUBLIC / STUDENT CONTENT -->
+        <template x-if="!token || roleId == 4">
+            <div class="space-y-8">
+                <!-- COURSE CATALOG -->
+                <section>
+                    <div class="flex justify-between items-center mb-6">
+                        <div>
+                            <h2 class="text-xl font-bold text-slate-900">Academic Courses</h2>
+                            <p class="text-xs text-slate-500">Explore modules and watch curriculum video lectures</p>
+                        </div>
+                        <button @click="fetchCourses()" class="text-xs font-semibold text-ucc-accent hover:underline flex items-center gap-1">
+                            <i class="fa-solid fa-arrows-rotate"></i> Refresh
+                        </button>
+                    </div>
+
+                    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <template x-for="course in courses" :key="course.CourseID">
+                            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition overflow-hidden flex flex-col">
+                                <div class="p-6 flex-grow">
+                                    <div class="flex justify-between items-start mb-3">
+                                        <span class="px-2.5 py-1 bg-blue-50 text-ucc-navy text-xs font-bold rounded-lg border border-blue-100" x-text="course.CourseCode"></span>
+                                    </div>
+                                    <h3 class="font-bold text-slate-900 text-lg mb-2" x-text="course.CourseName"></h3>
+                                    <p class="text-xs text-slate-600 line-clamp-2" x-text="course.Description || 'No description provided.'"></p>
+                                </div>
+                                <div class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-between items-center">
+                                    <button @click="loadCourseTopics(course)" class="w-full py-2 bg-ucc-navy text-white text-xs font-semibold rounded-xl hover:bg-ucc-lightNavy transition flex items-center justify-center gap-2">
+                                        <span>View Topics</span>
+                                        <i class="fa-solid fa-chevron-right text-[10px]"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </section>
+
+                <!-- TOPICS & VIDEO BROWSER PANEL -->
+                <template x-if="selectedCourse">
+                    <section class="bg-white rounded-2xl border border-slate-200 shadow-lg p-6">
+                        <div class="flex justify-between items-center border-b border-slate-100 pb-4 mb-6">
+                            <div>
+                                <span class="text-xs font-bold text-ucc-accent uppercase tracking-wider" x-text="selectedCourse.CourseCode"></span>
+                                <h2 class="text-xl font-bold text-slate-900" x-text="selectedCourse.CourseName"></h2>
+                            </div>
+                            <button @click="selectedCourse = null; selectedTopic = null; currentVideos = []" class="text-slate-400 hover:text-slate-600 p-2">
+                                <i class="fa-solid fa-xmark text-lg"></i>
+                            </button>
+                        </div>
+
+                        <div class="grid md:grid-cols-3 gap-6">
+                            <!-- TOPICS COLUMN -->
+                            <div class="space-y-3">
+                                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Topics</h3>
+                                <template x-for="t in currentTopics" :key="t.TopicID">
+                                    <button @click="loadSubtopics(t)" 
+                                            :class="selectedTopic && selectedTopic.TopicID === t.TopicID ? 'bg-ucc-navy text-white shadow-sm' : 'bg-slate-50 text-slate-700 hover:bg-slate-100'"
+                                            class="w-full text-left p-3 rounded-xl text-sm font-semibold transition flex justify-between items-center">
+                                        <span x-text="t.TopicName"></span>
+                                        <i class="fa-solid fa-chevron-right text-xs opacity-60"></i>
+                                    </button>
+                                </template>
+                                <template x-if="currentTopics.length === 0">
+                                    <p class="text-xs text-slate-400 italic">No topics available for this course.</p>
+                                </template>
+                            </div>
+
+                            <!-- SUBTOPICS & VIDEOS COLUMN -->
+                            <div class="md:col-span-2 space-y-4">
+                                <template x-if="selectedTopic">
+                                    <div>
+                                        <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
+                                            Subtopics for <span class="text-slate-700" x-text="selectedTopic.TopicName"></span>
+                                        </h3>
+                                        <div class="grid sm:grid-cols-2 gap-3 mb-6">
+                                            <template x-for="st in currentSubtopics" :key="st.SubtopicID">
+                                                <button @click="loadSubtopicVideos(st)" 
+                                                        :class="selectedSubtopic && selectedSubtopic.SubtopicID === st.SubtopicID ? 'border-ucc-accent bg-blue-50/50 text-ucc-accent' : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'"
+                                                        class="p-3 border rounded-xl text-xs font-semibold text-left transition flex justify-between items-center">
+                                                    <span x-text="st.SubtopicName"></span>
+                                                    <i class="fa-solid fa-play text-[10px]"></i>
+                                                </button>
+                                            </template>
+                                        </div>
+
+                                        <!-- VIDEO LIST -->
+                                        <template x-if="selectedSubtopic">
+                                            <div>
+                                                <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Lectures</h4>
+                                                <div class="space-y-3">
+                                                    <template x-for="v in currentVideos" :key="v.VideoID">
+                                                        <div class="p-4 bg-slate-50 border border-slate-200/80 rounded-xl flex items-center justify-between">
+                                                            <div class="flex items-center gap-3">
+                                                                <div class="w-10 h-10 rounded-lg bg-blue-100 text-ucc-accent flex items-center justify-center">
+                                                                    <i class="fa-solid fa-video"></i>
+                                                                </div>
+                                                                <div>
+                                                                    <h5 class="font-bold text-slate-800 text-sm" x-text="v.Title"></h5>
+                                                                    <p class="text-xs text-slate-500 line-clamp-1" x-text="v.Description"></p>
+                                                                    <span class="text-[10px] text-slate-400 font-medium" x-text="'Views: ' + v.ViewsCount"></span>
+                                                                </div>
+                                                            </div>
+                                                            <button @click="playVideo(v)" class="px-4 py-2 bg-ucc-accent text-white text-xs font-semibold rounded-xl hover:bg-blue-700 transition flex items-center gap-2 shadow-sm">
+                                                                <i class="fa-solid fa-play text-[10px]"></i> Watch
+                                                            </button>
+                                                        </div>
+                                                    </template>
+                                                    <template x-if="currentVideos.length === 0">
+                                                        <p class="text-xs text-slate-400 italic">No video lectures uploaded yet.</p>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+                                <template x-if="!selectedTopic">
+                                    <div class="h-48 flex items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 text-xs">
+                                        Select a topic from the left menu to view lessons.
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </section>
+                </template>
+            </div>
+        </template>
+
+        <!-- ADMIN DASHBOARD (RoleID: 1) -->
+        <template x-if="token && roleId == 1">
+            <div class="space-y-8">
+                <div class="flex border-b border-slate-200 gap-4">
+                    <button @click="adminTab = 'users'" :class="adminTab === 'users' ? 'border-ucc-navy text-ucc-navy' : 'border-transparent text-slate-500 hover:text-slate-700'" class="py-3 px-4 border-b-2 font-bold text-sm">
+                        User Management
+                    </button>
+                    <button @click="adminTab = 'courses'" :class="adminTab === 'courses' ? 'border-ucc-navy text-ucc-navy' : 'border-transparent text-slate-500 hover:text-slate-700'" class="py-3 px-4 border-b-2 font-bold text-sm">
+                        Course Administration
+                    </button>
+                </div>
+
+                <!-- ADMIN USERS TAB -->
+                <template x-if="adminTab === 'users'">
+                    <div class="grid lg:grid-cols-3 gap-8">
+                        <!-- CREATE USER FORM -->
+                        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-fit">
+                            <h3 class="font-bold text-slate-900 text-lg mb-4 flex items-center gap-2">
+                                <i class="fa-solid fa-user-plus text-ucc-navy"></i> Create Platform User
+                            </h3>
+                            <form @submit.prevent="adminCreateUser()" class="space-y-4">
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-600 mb-1">Username</label>
+                                    <input type="text" x-model="newUser.Username" required class="w-full px-3 py-2 border rounded-xl text-sm focus:ring-2 focus:ring-ucc-accent outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-600 mb-1">Email</label>
+                                    <input type="email" x-model="newUser.Email" required class="w-full px-3 py-2 border rounded-xl text-sm focus:ring-2 focus:ring-ucc-accent outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-600 mb-1">Password</label>
+                                    <input type="password" x-model="newUser.Password" required class="w-full px-3 py-2 border rounded-xl text-sm focus:ring-2 focus:ring-ucc-accent outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-600 mb-1">Role</label>
+                                    <select x-model="newUser.RoleID" class="w-full px-3 py-2 border rounded-xl text-sm focus:ring-2 focus:ring-ucc-accent outline-none">
+                                        <option value="1">Admin</option>
+                                        <option value="2">Lecturer</option>
+                                        <option value="3">Teaching Assistant</option>
+                                        <option value="4">Student</option>
+                                    </select>
+                                </div>
+                                <button type="submit" class="w-full py-2.5 bg-ucc-navy text-white text-xs font-semibold rounded-xl hover:bg-ucc-lightNavy transition">
+                                    Create User
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- DELETE & RESET PASSWORD ACTIONS -->
+                        <div class="lg:col-span-2 space-y-6">
+                            <!-- DELETE USER CARD -->
+                            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                                <h3 class="font-bold text-slate-900 text-lg mb-4 text-rose-700 flex items-center gap-2">
+                                    <i class="fa-solid fa-user-xmark"></i> Delete User Account
+                                </h3>
+                                <form @submit.prevent="adminDeleteUser()" class="grid sm:grid-cols-2 gap-4">
+                                    <input type="text" x-model="deleteUserReq.Username" placeholder="Target Username" required class="px-3 py-2 border rounded-xl text-sm">
+                                    <input type="email" x-model="deleteUserReq.Email" placeholder="Target Email" required class="px-3 py-2 border rounded-xl text-sm">
+                                    <div class="sm:col-span-2">
+                                        <button type="submit" class="px-5 py-2.5 bg-rose-600 text-white text-xs font-semibold rounded-xl hover:bg-rose-700 transition">
+                                            Delete Account permanently
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+
+                            <!-- RESET PASSWORD CARD -->
+                            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                                <h3 class="font-bold text-slate-900 text-lg mb-4 flex items-center gap-2">
+                                    <i class="fa-solid fa-key text-amber-600"></i> Admin Reset Password
+                                </h3>
+                                <form @submit.prevent="adminResetPassword()" class="grid sm:grid-cols-2 gap-4">
+                                    <input type="number" x-model="resetPassReq.UserID" placeholder="User ID" required class="px-3 py-2 border rounded-xl text-sm">
+                                    <input type="password" x-model="resetPassReq.NewPassword" placeholder="New Password" required class="px-3 py-2 border rounded-xl text-sm">
+                                    <div class="sm:col-span-2">
+                                        <button type="submit" class="px-5 py-2.5 bg-amber-600 text-white text-xs font-semibold rounded-xl hover:bg-amber-700 transition">
+                                            Reset User Password
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- ADMIN COURSES TAB -->
+                <template x-if="adminTab === 'courses'">
+                    <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                        <h3 class="font-bold text-slate-900 text-lg mb-4">Course Catalog Management</h3>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-sm">
+                                <thead class="bg-slate-50 border-b">
+                                    <tr>
+                                        <th class="p-3 font-bold text-slate-600">ID</th>
+                                        <th class="p-3 font-bold text-slate-600">Code</th>
+                                        <th class="p-3 font-bold text-slate-600">Name</th>
+                                        <th class="p-3 font-bold text-slate-600">Creator ID</th>
+                                        <th class="p-3 font-bold text-slate-600 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template x-for="c in courses" :key="c.CourseID">
+                                        <tr class="border-b hover:bg-slate-50">
+                                            <td class="p-3 text-slate-500" x-text="c.CourseID"></td>
+                                            <td class="p-3 font-bold text-ucc-navy" x-text="c.CourseCode"></td>
+                                            <td class="p-3 font-semibold" x-text="c.CourseName"></td>
+                                            <td class="p-3 text-slate-500" x-text="c.CreatedBy"></td>
+                                            <td class="p-3 text-right">
+                                                <button @click="adminDeleteCourse(c.CourseID)" class="px-3 py-1 bg-rose-100 text-rose-700 rounded-lg text-xs font-bold hover:bg-rose-200 transition">
+                                                    Delete
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </template>
+
+        <!-- LECTURER & TA DASHBOARD (RoleID: 2 & 3) -->
+        <template x-if="token && (roleId == 2 || roleId == 3)">
+            <div class="space-y-8">
+                <!-- TOP CONTROLS & TA CREATION -->
+                <div class="grid lg:grid-cols-3 gap-8">
+                    
+                    <!-- CREATE COURSE FORM (Lecturer only) -->
+                    <template x-if="roleId == 2">
+                        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                            <h3 class="font-bold text-slate-900 text-lg mb-4 flex items-center gap-2">
+                                <i class="fa-solid fa-book text-ucc-navy"></i> Add New Course
+                            </h3>
+                            <form @submit.prevent="createCourse()" class="space-y-4">
+                                <input type="text" x-model="newCourse.CourseCode" placeholder="Course Code (e.g., DCIT205)" required class="w-full px-3 py-2 border rounded-xl text-sm">
+                                <input type="text" x-model="newCourse.CourseName" placeholder="Course Title" required class="w-full px-3 py-2 border rounded-xl text-sm">
+                                <textarea x-model="newCourse.Description" placeholder="Description" class="w-full px-3 py-2 border rounded-xl text-sm h-20"></textarea>
+                                <button type="submit" class="w-full py-2.5 bg-ucc-navy text-white text-xs font-semibold rounded-xl hover:bg-ucc-lightNavy transition">
+                                    Create Course
+                                </button>
+                            </form>
+                        </div>
+                    </template>
+
+                    <!-- CREATE TA FORM (Lecturer only) -->
+                    <template x-if="roleId == 2">
+                        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                            <h3 class="font-bold text-slate-900 text-lg mb-4 flex items-center gap-2">
+                                <i class="fa-solid fa-user-gear text-emerald-600"></i> Assign Teaching Assistant
+                            </h3>
+                            <form @submit.prevent="createTA()" class="space-y-3">
+                                <input type="text" x-model="newTA.CourseCode" placeholder="Course Code" required class="w-full px-3 py-2 border rounded-xl text-sm">
+                                <input type="text" x-model="newTA.Username" placeholder="TA Username" required class="w-full px-3 py-2 border rounded-xl text-sm">
+                                <input type="email" x-model="newTA.Email" placeholder="TA Email" required class="w-full px-3 py-2 border rounded-xl text-sm">
+                                <input type="password" x-model="newTA.Password" placeholder="Temporary Password" required class="w-full px-3 py-2 border rounded-xl text-sm">
+                                <button type="submit" class="w-full py-2.5 bg-emerald-600 text-white text-xs font-semibold rounded-xl hover:bg-emerald-700 transition">
+                                    Create & Assign TA
+                                </button>
+                            </form>
+                        </div>
+                    </template>
+
+                    <!-- VIDEO UPLOAD PANEL -->
+                    <div :class="roleId == 2 ? '' : 'lg:col-span-3'" class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                        <h3 class="font-bold text-slate-900 text-lg mb-4 flex items-center gap-2">
+                            <i class="fa-solid fa-cloud-arrow-up text-ucc-accent"></i> Upload Video Lecture
+                        </h3>
+                        <form @submit.prevent="uploadVideo()" class="space-y-3">
+                            <input type="text" x-model="uploadForm.Title" placeholder="Lecture Title" required class="w-full px-3 py-2 border rounded-xl text-sm">
+                            <input type="text" x-model="uploadForm.CourseCode" placeholder="Course Code" required class="w-full px-3 py-2 border rounded-xl text-sm">
+                            <div class="grid grid-cols-2 gap-2">
+                                <input type="text" x-model="uploadForm.TopicName" placeholder="Topic Name" required class="px-3 py-2 border rounded-xl text-sm">
+                                <input type="text" x-model="uploadForm.SubtopicName" placeholder="Subtopic Name" required class="px-3 py-2 border rounded-xl text-sm">
+                            </div>
+                            <textarea x-model="uploadForm.Description" placeholder="Lecture Notes / Description" class="w-full px-3 py-2 border rounded-xl text-sm h-16"></textarea>
+                            <input type="file" @change="uploadForm.File = $event.target.files[0]" required class="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-ucc-accent hover:file:bg-blue-100">
+                            <button type="submit" :disabled="uploading" class="w-full py-2.5 bg-ucc-accent text-white text-xs font-semibold rounded-xl hover:bg-blue-700 transition flex items-center justify-center gap-2">
+                                <template x-if="uploading"><i class="fa-solid fa-spinner animate-spin"></i></template>
+                                <span>Upload Video</span>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- CURRICULUM BUILDER -->
+                <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                    <h3 class="font-bold text-slate-900 text-lg mb-4">Curriculum Structure Builder</h3>
+                    <div class="grid md:grid-cols-2 gap-6">
+                        <!-- ADD TOPIC -->
+                        <div class="p-4 bg-slate-50 rounded-xl border border-slate-200/60">
+                            <h4 class="font-bold text-sm text-slate-700 mb-3">Add Topic to Course</h4>
+                            <form @submit.prevent="createTopic()" class="space-y-3">
+                                <input type="text" x-model="topicForm.CourseCode" placeholder="Target Course Code" required class="w-full px-3 py-2 border rounded-xl text-sm">
+                                <input type="text" x-model="topicForm.TopicName" placeholder="New Topic Name" required class="w-full px-3 py-2 border rounded-xl text-sm">
+                                <button type="submit" class="w-full py-2 bg-slate-800 text-white text-xs font-semibold rounded-xl hover:bg-slate-900 transition">
+                                    Create Topic
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- ADD SUBTOPIC -->
+                        <div class="p-4 bg-slate-50 rounded-xl border border-slate-200/60">
+                            <h4 class="font-bold text-sm text-slate-700 mb-3">Add Subtopic to Topic</h4>
+                            <form @submit.prevent="createSubtopic()" class="space-y-3">
+                                <input type="text" x-model="subtopicForm.CourseCode" placeholder="Course Code" required class="w-full px-3 py-2 border rounded-xl text-sm">
+                                <input type="text" x-model="subtopicForm.TopicName" placeholder="Parent Topic Name" required class="w-full px-3 py-2 border rounded-xl text-sm">
+                                <input type="text" x-model="subtopicForm.SubtopicName" placeholder="New Subtopic Name" required class="w-full px-3 py-2 border rounded-xl text-sm">
+                                <button type="submit" class="w-full py-2 bg-slate-800 text-white text-xs font-semibold rounded-xl hover:bg-slate-900 transition">
+                                    Create Subtopic
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </main>
+
+    <!-- SECURE VIDEO PLAYER & INTERACTION MODAL -->
+    <template x-if="activeVideo">
+        <div class="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-white max-w-3xl w-full rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+                <div class="p-4 bg-ucc-navy text-white flex justify-between items-center">
+                    <h3 class="font-bold text-base" x-text="activeVideo.Title"></h3>
+                    <button @click="closeVideoModal()" class="text-white/80 hover:text-white">
+                        <i class="fa-solid fa-xmark text-lg"></i>
+                    </button>
+                </div>
+                
+                <!-- Loading State -->
+                <template x-if="videoLoading">
+                    <div class="bg-slate-950 aspect-video flex flex-col items-center justify-center text-white">
+                        <div class="w-10 h-10 border-4 border-ucc-gold border-t-transparent rounded-full animate-spin mb-3"></div>
+                        <p class="text-xs font-medium tracking-wide">Authorizing secure streaming session...</p>
+                    </div>
+                </template>
+
+                <!-- Video Player (Mapped to SAS Playback URL with View Counter on Play) -->
+                <div class="bg-black aspect-video flex items-center justify-center" x-show="!videoLoading">
+                    <video 
+                        :src="playbackUrl" 
+                        controls 
+                        autoplay 
+                        preload="metadata"
+                        class="w-full h-full"
+                        @play.once="recordView(activeVideo.VideoID)"
+                        @error="videoError = 'Failed to load video stream from Azure Blob Storage.'">
+                    </video>
+                </div>
+
+                <!-- Error Display -->
+                <template x-if="videoError">
+                    <div class="bg-rose-50 text-rose-700 p-3 text-xs font-semibold text-center" x-text="videoError"></div>
+                </template>
+
+                <div class="p-6 overflow-y-auto space-y-4">
+                    <p class="text-sm text-slate-600" x-text="activeVideo.Description || 'No description available for this video.'"></p>
+                    
+                    <div class="flex flex-wrap items-center justify-between border-t border-slate-100 pt-4 gap-4">
+                        <!-- Video Feedback Buttons -->
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs font-bold text-slate-500">Was this helpful?</span>
+                            <button @click="interactVideo(activeVideo.VideoID, true)" class="px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-xl text-xs font-bold transition flex items-center gap-1.5">
+                                <i class="fa-regular fa-thumbs-up"></i> Helpful
+                            </button>
+                            <button @click="interactVideo(activeVideo.VideoID, false)" class="px-3 py-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 rounded-xl text-xs font-bold transition flex items-center gap-1.5">
+                                <i class="fa-regular fa-thumbs-down"></i> Not Helpful
+                            </button>
+                        </div>
+
+                        <!-- Fetch Analytics Button (Staff) -->
+                        <template x-if="roleId == 1 || roleId == 2 || roleId == 3">
+                            <button @click="fetchAnalytics(activeVideo.VideoID)" class="text-xs font-bold text-ucc-accent hover:underline flex items-center gap-1">
+                                <i class="fa-solid fa-chart-pie"></i> View Analytics
+                            </button>
+                        </template>
+                    </div>
+
+                    <!-- ANALYTICS DISPLAY PANEL -->
+                    <template x-if="videoAnalytics">
+                        <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 grid grid-cols-3 gap-4 text-center">
+                            <div>
+                                <span class="block text-xs font-bold text-slate-400">Total Views</span>
+                                <span class="text-lg font-extrabold text-slate-800" x-text="videoAnalytics.ViewsCount"></span>
+                            </div>
+                            <div>
+                                <span class="block text-xs font-bold text-emerald-600">Helpful</span>
+                                <span class="text-lg font-extrabold text-emerald-700" x-text="videoAnalytics.HelpfulCount"></span>
+                            </div>
+                            <div>
+                                <span class="block text-xs font-bold text-rose-600">Unhelpful</span>
+                                <span class="text-lg font-extrabold text-rose-700" x-text="videoAnalytics.UnhelpfulCount"></span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- AUTHENTICATION MODAL -->
+    <template x-if="showAuthModal">
+        <div class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-white max-w-md w-full rounded-2xl shadow-2xl p-6 relative">
+                <button @click="showAuthModal = false" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+
+                <div class="mb-6">
+                    <h2 class="text-2xl font-bold text-ucc-navy" x-text="authMode === 'login' ? 'Welcome Back' : 'Student Registration'"></h2>
+                    <p class="text-xs text-slate-500 mt-1" x-text="authMode === 'login' ? 'Access your UCC courses and lectures' : 'Create a student account'"></p>
+                </div>
+
+                <!-- LOGIN FORM -->
+                <template x-if="authMode === 'login'">
+                    <form @submit.prevent="login()" class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-600 mb-1">Username</label>
+                            <input type="text" x-model="loginForm.username" required class="w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 focus:ring-ucc-accent outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-600 mb-1">Password</label>
+                            <input type="password" x-model="loginForm.password" required class="w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 focus:ring-ucc-accent outline-none">
+                        </div>
+                        <button type="submit" class="w-full py-3 bg-ucc-navy text-white text-sm font-semibold rounded-xl hover:bg-ucc-lightNavy transition shadow">
+                            Log In
+                        </button>
+                    </form>
+                </template>
+
+                <!-- REGISTER FORM -->
+                <template x-if="authMode === 'register'">
+                    <form @submit.prevent="register()" class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-600 mb-1">Username</label>
+                            <input type="text" x-model="regForm.Username" required class="w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 focus:ring-ucc-accent outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-600 mb-1">Email</label>
+                            <input type="email" x-model="regForm.Email" required class="w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 focus:ring-ucc-accent outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-600 mb-1">Password</label>
+                            <input type="password" x-model="regForm.Password" required class="w-full px-3 py-2.5 border rounded-xl text-sm focus:ring-2 focus:ring-ucc-accent outline-none">
+                        </div>
+                        <button type="submit" class="w-full py-3 bg-ucc-gold text-ucc-navy text-sm font-bold rounded-xl hover:bg-amber-400 transition shadow">
+                            Register as Student
+                        </button>
+                    </form>
+                </template>
+
+                <div class="mt-6 text-center text-xs text-slate-500">
+                    <template x-if="authMode === 'login'">
+                        <p>Don't have an account? <button @click="authMode = 'register'" class="text-ucc-accent font-bold hover:underline">Register</button></p>
+                    </template>
+                    <template x-if="authMode === 'register'">
+                        <p>Already registered? <button @click="authMode = 'login'" class="text-ucc-accent font-bold hover:underline">Log in</button></p>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- API CONFIG MODAL -->
+    <template x-if="showApiModal">
+        <div class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-white max-w-md w-full rounded-2xl shadow-2xl p-6 relative">
+                <button @click="showApiModal = false" class="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+                <h3 class="font-bold text-slate-900 text-lg mb-2">API Base URL Settings</h3>
+                <p class="text-xs text-slate-500 mb-4">Set your active backend URL for API requests (Azure App Service or Localhost).</p>
+                <input type="text" x-model="apiUrl" class="w-full px-3 py-2 border rounded-xl text-sm mb-4">
+                <button @click="saveApiUrl()" class="w-full py-2 bg-ucc-navy text-white text-xs font-semibold rounded-xl">Save & Close</button>
+            </div>
+        </div>
+    </template>
+
+    <!-- ALPINE APP LOGIC -->
+    <script>
+        function app() {
+            return {
+                apiUrl: localStorage.getItem('ucc_api_url') || window.location.origin,
+                token: localStorage.getItem('ucc_token') || '',
+                username: localStorage.getItem('ucc_username') || '',
+                roleId: parseInt(localStorage.getItem('ucc_role')) || 4,
+                
+                showAuthModal: false,
+                authMode: 'login',
+                showApiModal: false,
+                adminTab: 'users',
+                uploading: false,
+
+                courses: [],
+                currentTopics: [],
+                currentSubtopics: [],
+                currentVideos: [],
+                
+                selectedCourse: null,
+                selectedTopic: null,
+                selectedSubtopic: null,
+                activeVideo: null,
+                playbackUrl: '',
+                videoLoading: false,
+                videoError: '',
+                videoAnalytics: null,
+
+                loginForm: { username: '', password: '' },
+                regForm: { Username: '', Email: '', Password: '' },
+                newUser: { Username: '', Email: '', Password: '', RoleID: 4 },
+                deleteUserReq: { Username: '', Email: '' },
+                resetPassReq: { UserID: '', NewPassword: '' },
+                newCourse: { CourseCode: '', CourseName: '', Description: '' },
+                newTA: { CourseCode: '', Username: '', Email: '', Password: '' },
+                topicForm: { CourseCode: '', TopicName: '' },
+                subtopicForm: { CourseCode: '', TopicName: '', SubtopicName: '' },
+                uploadForm: { Title: '', Description: '', CourseCode: '', TopicName: '', SubtopicName: '', File: null },
+                searchQuery: '',
+                searchResults: null,
+
+                toasts: [],
+
+                initApp() {
+                    if (this.apiUrl.endsWith('/')) {
+                        this.apiUrl = this.apiUrl.slice(0, -1);
+                    }
+                    this.fetchCourses();
+                },
+
+                notify(message, type = 'info') {
+                    const id = Date.now();
+                    this.toasts.push({ id, message, type });
+                    setTimeout(() => this.removeToast(id), 4000);
+                },
+
+                removeToast(id) {
+                    this.toasts = this.toasts.filter(t => t.id !== id);
+                },
+
+                saveApiUrl() {
+                    localStorage.setItem('ucc_api_url', this.apiUrl);
+                    this.showApiModal = false;
+                    this.notify('API Endpoint saved!', 'success');
+                    this.fetchCourses();
+                },
+
+                getRoleName(id) {
+                    const roles = { 1: 'Admin', 2: 'Lecturer', 3: 'TA', 4: 'Student' };
+                    return roles[id] || 'User';
+                },
+
+                async login() {
+                    try {
+                        const params = new URLSearchParams();
+                        params.append('username', this.loginForm.username);
+                        params.append('password', this.loginForm.password);
+
+                        const res = await fetch(`${this.apiUrl}/login`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                            body: params
+                        });
+
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.detail || 'Login failed');
+
+                        this.token = data.access_token;
+                        localStorage.setItem('ucc_token', this.token);
+                        
+                        const payload = JSON.parse(atob(this.token.split('.')[1]));
+                        this.username = payload.sub;
+                        this.roleId = payload.role;
+                        
+                        localStorage.setItem('ucc_username', this.username);
+                        localStorage.setItem('ucc_role', this.roleId);
+
+                        this.showAuthModal = false;
+                        this.notify(`Logged in successfully as ${this.username}`, 'success');
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                },
+
+                async register() {
+                    try {
+                        const res = await fetch(`${this.apiUrl}/register`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.regForm)
+                        });
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.detail || 'Registration failed');
+
+                        this.notify('Registration successful! Please log in.', 'success');
+                        this.authMode = 'login';
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                },
+
+                logout() {
+                    this.token = '';
+                    this.username = '';
+                    this.roleId = 4;
+                    localStorage.removeItem('ucc_token');
+                    localStorage.removeItem('ucc_username');
+                    localStorage.removeItem('ucc_role');
+                    this.notify('Logged out successfully', 'info');
+                },
+
+                async apiFetch(endpoint, options = {}) {
+                    let headers = options.headers || {};
+                    if (this.token) {
+                        headers['Authorization'] = `Bearer ${this.token}`;
+                    }
+                    options.headers = headers;
+
+                    const res = await fetch(`${this.apiUrl}${endpoint}`, options);
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.detail || 'Request failed');
+                    return data;
+                },
+
+                async fetchCourses() {
+                    try {
+                        this.courses = await this.apiFetch('/courses/');
+                    } catch (err) {
+                        this.notify('Could not load courses', 'error');
+                    }
+                },
+
+                async loadCourseTopics(course) {
+                    this.selectedCourse = course;
+                    this.selectedTopic = null;
+                    this.selectedSubtopic = null;
+                    this.currentTopics = [];
+                    try {
+                        this.currentTopics = await this.apiFetch(`/courses/${course.CourseID}/topics`);
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                },
+
+                async loadSubtopics(topic) {
+                    this.selectedTopic = topic;
+                    this.selectedSubtopic = null;
+                    this.currentSubtopics = [];
+                    try {
+                        this.currentSubtopics = await this.apiFetch(`/topics/${topic.TopicID}/subtopics`);
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                },
+
+                async loadSubtopicVideos(subtopic) {
+                    this.selectedSubtopic = subtopic;
+                    this.currentVideos = [];
+                    try {
+                        this.currentVideos = await this.apiFetch(`/subtopics/${subtopic.SubtopicID}/videos`);
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                },
+
+                async playVideo(video) {
+                    this.activeVideo = video;
+                    this.playbackUrl = '';
+                    this.videoError = '';
+                    this.videoLoading = true;
+                    this.videoAnalytics = null;
+
+                    try {
+                        const data = await this.apiFetch(`/videos/${video.VideoID}/playback-url`);
+                        this.playbackUrl = data.playback_url;
+                    } catch (err) {
+                        this.videoError = err.message || 'Failed to authorize video playback.';
+                    } finally {
+                        this.videoLoading = false;
+                    }
+                },
+
+                closeVideoModal() {
+                    this.activeVideo = null;
+                    this.playbackUrl = '';
+                    this.videoError = '';
+                    this.videoLoading = false;
+                },
+
+                async recordView(videoId) {
+                    try {
+                        await this.apiFetch(`/videos/${videoId}/view`, { method: 'POST' });
+                        if (this.activeVideo && this.activeVideo.VideoID === videoId) {
+                            this.activeVideo.ViewsCount = (this.activeVideo.ViewsCount || 0) + 1;
+                        }
+                    } catch (e) {
+                        console.warn('View count recording failed:', e);
+                    }
+                },
+
+                async interactVideo(videoId, isHelpful) {
+                    try {
+                        await this.apiFetch('/videos/interact', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ VideoID: videoId, IsHelpful: isHelpful })
+                        });
+                        this.notify('Feedback recorded. Thank you!', 'success');
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                },
+
+                async fetchAnalytics(videoId) {
+                    try {
+                        this.videoAnalytics = await this.apiFetch(`/videos/${videoId}/analytics`);
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                },
+
+                async performSearch() {
+                    if (!this.searchQuery.trim()) return;
+                    try {
+                        this.searchResults = await this.apiFetch(`/search/?q=${encodeURIComponent(this.searchQuery)}`);
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                },
+
+                async createCourse() {
+                    try {
+                        await this.apiFetch('/courses/', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.newCourse)
+                        });
+                        this.notify('Course created successfully!', 'success');
+                        this.newCourse = { CourseCode: '', CourseName: '', Description: '' };
+                        this.fetchCourses();
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                },
+
+                async createTA() {
+                    try {
+                        const code = this.newTA.CourseCode;
+                        await this.apiFetch(`/lecturer/create-ta?course_code=${encodeURIComponent(code)}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                Username: this.newTA.Username,
+                                Email: this.newTA.Email,
+                                Password: this.newTA.Password
+                            })
+                        });
+                        this.notify('Teaching Assistant assigned successfully!', 'success');
+                        this.newTA = { CourseCode: '', Username: '', Email: '', Password: '' };
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                },
+
+                async createTopic() {
+                    try {
+                        const formData = new FormData();
+                        formData.append('CourseCode', this.topicForm.CourseCode);
+                        formData.append('TopicName', this.topicForm.TopicName);
+                        
+                        await this.apiFetch('/topics/', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        this.notify('Topic added to course!', 'success');
+                        this.topicForm = { CourseCode: '', TopicName: '' };
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                },
+
+                async createSubtopic() {
+                    try {
+                        const formData = new FormData();
+                        formData.append('CourseCode', this.subtopicForm.CourseCode);
+                        formData.append('TopicName', this.subtopicForm.TopicName);
+                        formData.append('SubtopicName', this.subtopicForm.SubtopicName);
+
+                        await this.apiFetch('/subtopics/', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        this.notify('Subtopic added to curriculum!', 'success');
+                        this.subtopicForm = { CourseCode: '', TopicName: '', SubtopicName: '' };
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                },
+
+                async uploadVideo() {
+                    if (!this.uploadForm.File) {
+                        this.notify('Please select a video file', 'error');
+                        return;
+                    }
+                    this.uploading = true;
+                    try {
+                        const formData = new FormData();
+                        formData.append('Title', this.uploadForm.Title);
+                        formData.append('Description', this.uploadForm.Description || '');
+                        formData.append('CourseCode', this.uploadForm.CourseCode);
+                        formData.append('TopicName', this.uploadForm.TopicName);
+                        formData.append('SubtopicName', this.uploadForm.SubtopicName);
+                        formData.append('file', this.uploadForm.File);
+
+                        await this.apiFetch('/videos/', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        this.notify('Video lecture uploaded successfully!', 'success');
+                        this.uploadForm = { Title: '', Description: '', CourseCode: '', TopicName: '', SubtopicName: '', File: null };
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    } finally {
+                        this.uploading = false;
+                    }
+                },
+
+                async adminCreateUser() {
+                    try {
+                        await this.apiFetch('/admin/create-user', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.newUser)
+                        });
+                        this.notify('User created successfully!', 'success');
+                        this.newUser = { Username: '', Email: '', Password: '', RoleID: 4 };
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                },
+
+                async adminDeleteUser() {
+                    try {
+                        await this.apiFetch('/admin/users/delete', {
+                            method: 'DELETE',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(this.deleteUserReq)
+                        });
+                        this.notify('User account deleted!', 'success');
+                        this.deleteUserReq = { Username: '', Email: '' };
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                },
+
+                async adminResetPassword() {
+                    try {
+                        await this.apiFetch(`/admin/users/${this.resetPassReq.UserID}/reset-password`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ new_password: this.resetPassReq.NewPassword })
+                        });
+                        this.notify('Password reset successfully!', 'success');
+                        this.resetPassReq = { UserID: '', NewPassword: '' };
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                },
+
+                async adminDeleteCourse(courseId) {
+                    if (!confirm('Are you sure you want to delete this course and all its curriculum?')) return;
+                    try {
+                        await this.apiFetch(`/courses/${courseId}`, { method: 'DELETE' });
+                        this.notify('Course deleted successfully', 'success');
+                        this.fetchCourses();
+                    } catch (err) {
+                        this.notify(err.message, 'error');
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>

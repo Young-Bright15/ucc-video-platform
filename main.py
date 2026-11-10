@@ -660,3 +660,56 @@ def search_platform(
         "courses": courses,
         "videos": videos
     }
+
+@app.delete("/videos/{video_id}", status_code=status.HTTP_200_OK)
+def delete_video(
+    video_id: int, 
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(get_current_user)
+):
+    """
+    Delete a video lecture from database and storage.
+    Restricted to Admins (Role 1), Lecturers (Role 2), and TAs (Role 3).
+    """
+    # 1. Enforce Role-Based Access Control (RBAC) via the User model RoleID
+    if current_user.RoleID not in [1, 2, 3]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="You do not have permission to delete video lectures."
+        )
+
+    # 2. Query the video record using models.Video
+    video = db.query(models.Video).filter(models.Video.VideoID == video_id).first()
+    if not video:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Video lecture not found."
+        )
+
+    try:
+        # 3. Optional cleanup from Azure Blob Storage if it's an Azure URL
+        if blob_service_client and video.FilePath and "blob.core.windows.net" in video.FilePath:
+            try:
+                parsed_url = urlparse(video.FilePath)
+                path_parts = parsed_url.path.lstrip("/").split("/", 1)
+                if len(path_parts) >= 2:
+                    container_name = path_parts[0]
+                    blob_name = path_parts[1]
+                    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+                    if blob_client.exists():
+                        blob_client.delete_blob()
+            except Exception as blob_err:
+                logger.warning(f"Could not delete blob from Azure storage: {str(blob_err)}")
+
+        # 4. Remove database entry and commit
+        db.delete(video)
+        db.commit()
+
+        return {"detail": "Video lecture deleted successfully."}
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error during deletion: {str(e)}"
+        )
